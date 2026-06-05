@@ -1,0 +1,631 @@
+/* ── dashboard.js — Stripe Verif Bot Dashboard ── */
+'use strict';
+
+// ══════════════════════════════════════════════════════════
+// AUTH — Telegram Login
+// ══════════════════════════════════════════════════════════
+let currentUser   = null; // { id, first_name, username, role, ... }
+let currentSection = 'overview';
+let ringChart, lineChart;
+let currentUrlFilter = '';
+
+const SESSION_KEY = 'svb_auth';
+
+async function initAuth() {
+  // Cek session yang tersimpan
+  const saved = sessionStorage.getItem(SESSION_KEY);
+  if (saved) {
+    try {
+      currentUser = JSON.parse(saved);
+      await showDashboard();
+      return;
+    } catch (_) {
+      sessionStorage.removeItem(SESSION_KEY);
+    }
+  }
+  showLoginScreen();
+}
+
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  injectTelegramWidget();
+}
+
+function injectTelegramWidget() {
+  const container = document.getElementById('telegram-login-btn');
+  container.innerHTML = '';
+  const script = document.createElement('script');
+  script.src = 'https://telegram.org/js/telegram-widget.js?22';
+  script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
+  script.setAttribute('data-size', 'large');
+  script.setAttribute('data-radius', '8');
+  script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+  script.setAttribute('data-request-access', 'write');
+  script.async = true;
+  container.appendChild(script);
+}
+
+// Callback dari Telegram Widget
+window.onTelegramAuth = async function(tgUser) {
+  showLoginError('');
+  showLoginLoading(true);
+
+  try {
+    // 1. Verifikasi hash di server (BOT_TOKEN aman di server)
+    const verifyRes = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tgUser),
+    });
+    const verifyData = await verifyRes.json();
+
+    if (!verifyData.ok) {
+      showLoginError('❌ Autentikasi gagal: ' + verifyData.error);
+      showLoginLoading(false);
+      return;
+    }
+
+    // 2. Cek apakah user terdaftar di Firestore dan rolenya
+    const userDoc = await db.collection('users').doc(String(tgUser.id)).get();
+
+    if (!userDoc.exists) {
+      showLoginError('🚫 Akun Telegram kamu belum terdaftar di bot. Kirim /start ke bot terlebih dahulu.');
+      showLoginLoading(false);
+      return;
+    }
+
+    const userData = userDoc.data();
+
+    if (!userData.is_active) {
+      showLoginError('🚫 Akun kamu dinonaktifkan. Hubungi admin.');
+      showLoginLoading(false);
+      return;
+    }
+
+    if (!['dev', 'staff'].includes(userData.role)) {
+      showLoginError('🚫 Akses ditolak. Akun kamu masih pending atau belum diapprove.');
+      showLoginLoading(false);
+      return;
+    }
+
+    // 3. Simpan session
+    currentUser = {
+      id:         tgUser.id,
+      first_name: tgUser.first_name,
+      last_name:  tgUser.last_name || '',
+      username:   tgUser.username || '',
+      role:       userData.role,
+    };
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    showLoginLoading(false);
+    await showDashboard();
+
+  } catch (err) {
+    console.error('Auth error:', err);
+    showLoginError('❌ Terjadi kesalahan. Coba lagi.');
+    showLoginLoading(false);
+  }
+};
+
+async function showDashboard() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'contents';
+
+  // Tampilkan info user di sidebar
+  const name = currentUser.first_name + (currentUser.last_name ? ' ' + currentUser.last_name : '');
+  document.getElementById('sidebar-user').innerHTML =
+    `<strong>${esc(name)}</strong><br><small style="color:var(--text-secondary)">` +
+    `${currentUser.username ? '@' + esc(currentUser.username) + ' · ' : ''}` +
+    `<span class="badge badge-${currentUser.role === 'dev' ? 'dev' : 'staff'}">${currentUser.role}</span></small>`;
+
+  // Tampilkan menu User Management hanya untuk dev
+  if (currentUser.role === 'dev') {
+    document.querySelectorAll('.nav-dev-only').forEach(el => el.style.display = 'flex');
+  }
+
+  initDashboard();
+}
+
+function showLoginError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function showLoginLoading(on) {
+  const btn = document.getElementById('telegram-login-btn');
+  btn.style.opacity = on ? '.5' : '1';
+  btn.style.pointerEvents = on ? 'none' : '';
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  sessionStorage.removeItem(SESSION_KEY);
+  currentUser = null;
+  showLoginScreen();
+});
+
+// ══════════════════════════════════════════════════════════
+// DASHBOARD INIT
+// ══════════════════════════════════════════════════════════
+function initDashboard() {
+  const datePicker = document.getElementById('datePicker');
+  datePicker.value = todayStr();
+  datePicker.addEventListener('change', () => loadSection(currentSection));
+
+  updateClock();
+  setInterval(updateClock, 1000);
+  setInterval(() => loadSection(currentSection), 60_000);
+
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.addEventListener('click', e => {
+      e.preventDefault();
+      document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('pageTitle').textContent = el.textContent.trim();
+      loadSection(el.dataset.section);
+    });
+  });
+
+  document.getElementById('sidebarToggle').addEventListener('click', () =>
+    document.getElementById('sidebar').classList.toggle('open')
+  );
+  document.getElementById('refreshBtn').addEventListener('click', () => loadSection(currentSection));
+  document.getElementById('btn-filter-url').addEventListener('click', () => {
+    currentUrlFilter = document.getElementById('filter-status').value;
+    loadUrlLog(document.getElementById('datePicker').value);
+  });
+  document.getElementById('btn-load-taskuser').addEventListener('click', () => {
+    const uid = document.getElementById('user-select').value;
+    if (uid) loadTaskUser(uid);
+  });
+
+  // Role filter tabs (User Management)
+  document.querySelectorAll('.role-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.role-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadUserMgmt(btn.dataset.role);
+    });
+  });
+
+  loadSection('overview');
+}
+
+// ── Helpers ───────────────────────────────────────────────
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+function updateClock() {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });
+}
+
+function setStatus(ok) {
+  const dot = document.getElementById('statusDot');
+  dot.style.background = ok ? 'var(--success)' : 'var(--danger)';
+  dot.style.boxShadow  = `0 0 6px ${ok ? 'var(--success)' : 'var(--danger)'}`;
+}
+
+function loadSection(sec) {
+  currentSection = sec;
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById(`section-${sec}`).classList.add('active');
+  const d = document.getElementById('datePicker').value;
+  if (sec === 'overview')  loadOverview(d);
+  if (sec === 'tasks')     loadTasks(d);
+  if (sec === 'staff')     loadStaff(d);
+  if (sec === 'taskuser')  initTaskUserSection();
+  if (sec === 'urllog')    loadUrlLog(d);
+  if (sec === 'analytics') loadAnalytics();
+  if (sec === 'usermgmt' && currentUser?.role === 'dev') loadUserMgmt('');
+}
+
+// ══════════════════════════════════════════════════════════
+// FIRESTORE HELPERS
+// ══════════════════════════════════════════════════════════
+async function countDocs(collectionPath, conditions = []) {
+  let q = db.collection(collectionPath);
+  for (const [field, op, val] of conditions) q = q.where(field, op, val);
+  const snap = await q.get();
+  return snap.size;
+}
+
+async function getDocs(collectionPath, conditions = [], orderByField = null,
+                        orderDir = 'desc', limitN = null) {
+  let q = db.collection(collectionPath);
+  for (const [field, op, val] of conditions) q = q.where(field, op, val);
+  if (orderByField) q = q.orderBy(orderByField, orderDir);
+  if (limitN)       q = q.limit(limitN);
+  const snap = await q.get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// ══════════════════════════════════════════════════════════
+// OVERVIEW
+// ══════════════════════════════════════════════════════════
+async function loadOverview(d) {
+  try {
+    const [total, ok, pending] = await Promise.all([
+      countDocs('sheet_urls', [['date', '==', d]]),
+      countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'OK']]),
+      countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'PENDING']]),
+    ]);
+    const fail  = total - ok - pending;
+    const pct   = total > 0 ? Math.round(ok / total * 100 * 10) / 10 : 0;
+    const tasks  = await countDocs('tasks', [['status', '==', 'active']]);
+    const staff  = await countDocs('users', [['role', '==', 'staff']]);
+
+    document.getElementById('val-total').textContent   = total;
+    document.getElementById('val-ok').textContent      = ok;
+    document.getElementById('val-fail').textContent    = fail;
+    document.getElementById('val-pending').textContent = pending;
+    document.getElementById('val-tasks').textContent   = tasks;
+    document.getElementById('val-staff').textContent   = staff;
+    document.getElementById('ring-pct').textContent    = pct;
+    renderRing(pct);
+    setStatus(true);
+  } catch (e) {
+    console.error('Overview error:', e);
+    setStatus(false);
+  }
+}
+
+function renderRing(pct) {
+  const ctx = document.getElementById('ringChart').getContext('2d');
+  if (ringChart) ringChart.destroy();
+  ringChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [pct, 100 - pct],
+        backgroundColor: ['#6366f1', 'rgba(255,255,255,0.06)'],
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      cutout: '78%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      animation: { duration: 800 },
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// TASKS
+// ══════════════════════════════════════════════════════════
+async function loadTasks(d) {
+  const tasks = await getDocs('tasks');
+  const tbody = document.getElementById('task-tbody');
+  if (!tasks.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">📭 Tidak ada task</td></tr>';
+    return;
+  }
+  const rows = await Promise.all(tasks.map(async t => {
+    const total = await countDocs('sheet_urls', [['task_id','==',t.task_id],['date','==',d]]);
+    const ok    = await countDocs('sheet_urls', [['task_id','==',t.task_id],['date','==',d],['status','==','OK']]);
+    const pct   = total > 0 ? Math.round(ok / total * 100) : 0;
+    return `<tr>
+      <td><code>${esc(t.task_id)}</code></td>
+      <td>${esc(t.title)}</td>
+      <td>${esc(t.sheet_tab||'-')}</td>
+      <td>
+        <div class="prog-wrap">
+          <div class="prog-bar-bg"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
+          <span class="prog-text">${ok}/${total||t.quota_total||0} (${pct}%)</span>
+        </div>
+      </td>
+      <td>${t.deadline ? t.deadline.slice(11,16)+' WIB' : '—'}</td>
+      <td>${esc(t.repeat_type||'')}</td>
+      <td><span class="badge ${statusBadge(t.status)}">${t.status}</span></td>
+    </tr>`;
+  }));
+  tbody.innerHTML = rows.join('');
+}
+
+// ══════════════════════════════════════════════════════════
+// STAFF MONITOR
+// ══════════════════════════════════════════════════════════
+async function loadStaff(d) {
+  const [staffList, progs] = await Promise.all([
+    getDocs('users', [['role','==','staff']]),
+    getDocs('task_progress', [['date','==',d]]),
+  ]);
+
+  const byUser = {};
+  for (const p of progs) {
+    const uid = p.user_id;
+    if (!byUser[uid]) byUser[uid] = { submitted: 0, ok: 0, fail: 0 };
+    byUser[uid].submitted += p.submitted || 0;
+    byUser[uid].ok        += p.verified_ok || 0;
+    byUser[uid].fail      += p.verified_fail || 0;
+  }
+
+  const sorted = staffList.sort((a, b) =>
+    (byUser[b.user_id]?.ok || 0) - (byUser[a.user_id]?.ok || 0)
+  );
+
+  const tbody = document.getElementById('staff-tbody');
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">📭 Tidak ada staff</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sorted.map((s, i) => {
+    const stat = byUser[s.user_id] || { submitted: 0, ok: 0, fail: 0 };
+    const rate = stat.submitted > 0 ? Math.round(stat.ok / stat.submitted * 100) : 0;
+    return `<tr>
+      <td><strong>${i+1}</strong></td>
+      <td>
+        <div class="user-info">
+          <div class="avatar">${(s.full_name||'?')[0].toUpperCase()}</div>
+          <div class="user-info-text">
+            <span class="user-info-name">${esc(s.full_name||'N/A')}</span>
+          </div>
+        </div>
+      </td>
+      <td>${s.username ? '@'+esc(s.username) : '-'}</td>
+      <td>${stat.submitted}</td>
+      <td style="color:var(--success)">${stat.ok}</td>
+      <td style="color:var(--danger)">${stat.fail}</td>
+      <td>
+        <div class="prog-wrap">
+          <div class="prog-bar-bg">
+            <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
+          </div>
+          <span class="prog-text">${rate}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════
+// TASK PER USER
+// ══════════════════════════════════════════════════════════
+async function initTaskUserSection() {
+  const select = document.getElementById('user-select');
+  if (select.options.length > 1) return; // sudah diisi
+
+  const staffList = await getDocs('users', [['role','==','staff']]);
+  staffList.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.user_id;
+    opt.textContent = (u.full_name || 'N/A') + (u.username ? ' (@'+u.username+')' : '');
+    select.appendChild(opt);
+  });
+}
+
+async function loadTaskUser(userId) {
+  const d = document.getElementById('datePicker').value;
+  const tbody = document.getElementById('taskuser-tbody');
+  const summary = document.getElementById('task-user-summary');
+  tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr>';
+  summary.style.display = 'none';
+
+  try {
+    const [tasks, progs] = await Promise.all([
+      getDocs('tasks'),
+      getDocs('task_progress', [['user_id','==', parseInt(userId)], ['date','==', d]]),
+    ]);
+
+    const progByTask = {};
+    for (const p of progs) progByTask[p.task_id] = p;
+
+    let totalSub = 0, totalOk = 0, totalFail = 0;
+
+    const rows = tasks.map(t => {
+      const p   = progByTask[t.task_id] || { submitted: 0, verified_ok: 0, verified_fail: 0 };
+      const sub = p.submitted || 0;
+      const ok  = p.verified_ok || 0;
+      const fail= p.verified_fail || 0;
+      const rate= sub > 0 ? Math.round(ok / sub * 100) : 0;
+      totalSub += sub; totalOk += ok; totalFail += fail;
+
+      const hasActivity = sub > 0;
+      return `<tr style="opacity:${hasActivity ? 1 : 0.45}">
+        <td>${esc(t.title)}</td>
+        <td><code>${esc(t.sheet_tab||'-')}</code></td>
+        <td>${sub}</td>
+        <td style="color:var(--success)">${ok}</td>
+        <td style="color:var(--danger)">${fail}</td>
+        <td>${sub > 0 ? rate+'%' : '—'}</td>
+        <td>
+          <div class="prog-wrap">
+            <div class="prog-bar-bg">
+              <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
+            </div>
+            <span class="prog-text">${ok}/${sub}</span>
+          </div>
+        </td>
+      </tr>`;
+    });
+
+    tbody.innerHTML = rows.length
+      ? rows.join('')
+      : '<tr><td colspan="7" class="loading-row">📭 Tidak ada task</td></tr>';
+
+    const totalRate = totalSub > 0 ? Math.round(totalOk / totalSub * 100) : 0;
+    summary.style.display = 'flex';
+    summary.innerHTML = `
+      <span class="tus-chip">📦 ${totalSub} Submitted</span>
+      <span class="tus-chip ok">✅ ${totalOk} OK</span>
+      <span class="tus-chip fail">❌ ${totalFail} Gagal</span>
+      <span class="tus-chip pend">📈 Rate: ${totalRate}%</span>
+    `;
+
+  } catch (err) {
+    console.error('TaskUser error:', err);
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⚠️ Gagal memuat data</td></tr>';
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// URL LOG
+// ══════════════════════════════════════════════════════════
+const URL_PAGE_SIZE = 50;
+let urlAllDocs = [];
+
+async function loadUrlLog(d) {
+  const conditions = [['date','==',d]];
+  if (currentUrlFilter) conditions.push(['status','==',currentUrlFilter]);
+  urlAllDocs = await getDocs('sheet_urls', conditions, 'created_at', 'desc', 500);
+  renderUrlPage(1);
+}
+
+function renderUrlPage(page) {
+  const start = (page - 1) * URL_PAGE_SIZE;
+  const slice = urlAllDocs.slice(start, start + URL_PAGE_SIZE);
+  const tbody = document.getElementById('url-tbody');
+
+  if (!slice.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-row">📭 Tidak ada data</td></tr>';
+    document.getElementById('url-pagination').innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = slice.map((r, i) => `
+    <tr>
+      <td>${start + i + 1}</td>
+      <td><code>${esc(r.task_id||'-')}</code></td>
+      <td>${esc(r.account||'-')}</td>
+      <td class="url-cell"><a href="${esc(r.payment_url)}" target="_blank" rel="noopener">${esc(r.payment_url)}</a></td>
+      <td><span class="badge ${urlStatusBadge(r.status)}">${r.status}</span></td>
+      <td>${r.http_code||'—'}</td>
+      <td>${r.verified_by ? '@'+esc(r.verified_by) : '—'}</td>
+      <td>${r.verified_at ? r.verified_at.slice(0,16).replace('T',' ') : '—'}</td>
+    </tr>
+  `).join('');
+
+  const totalPages = Math.ceil(urlAllDocs.length / URL_PAGE_SIZE);
+  renderPagination('url-pagination', page, totalPages);
+}
+
+function renderPagination(containerId, current, total) {
+  const el = document.getElementById(containerId);
+  if (total <= 1) { el.innerHTML = ''; return; }
+  const pages = [];
+  for (let p = Math.max(1, current-2); p <= Math.min(total, current+2); p++) pages.push(p);
+  el.innerHTML = pages.map(p =>
+    `<button class="page-btn ${p===current?'active':''}" onclick="renderUrlPage(${p})">${p}</button>`
+  ).join('');
+}
+
+// ══════════════════════════════════════════════════════════
+// ANALYTICS — 7 hari terakhir
+// ══════════════════════════════════════════════════════════
+async function loadAnalytics() {
+  const labels = [], okData = [], failData = [];
+  const today = new Date();
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    labels.push(dateStr.slice(5));
+
+    const [ok, total] = await Promise.all([
+      countDocs('sheet_urls', [['date','==',dateStr],['status','==','OK']]),
+      countDocs('sheet_urls', [['date','==',dateStr]]),
+    ]);
+    okData.push(ok);
+    failData.push(Math.max(0, total - ok));
+  }
+
+  const ctx = document.getElementById('lineChart').getContext('2d');
+  if (lineChart) lineChart.destroy();
+  lineChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: '✅ OK',     data: okData,   backgroundColor: 'rgba(99,102,241,0.7)', borderRadius: 6 },
+        { label: '❌ Failed', data: failData,  backgroundColor: 'rgba(239,68,68,0.5)',  borderRadius: 6 },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#94a3b8' } } },
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,.05)' } },
+        y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// USER MANAGEMENT (dev only)
+// ══════════════════════════════════════════════════════════
+async function loadUserMgmt(roleFilter) {
+  const tbody = document.getElementById('usermgmt-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr>';
+
+  try {
+    const allUsers = await getDocs('users');
+
+    // Hitung statistik
+    document.getElementById('ustat-total').textContent    = allUsers.length;
+    document.getElementById('ustat-dev').textContent     = allUsers.filter(u => u.role==='dev').length;
+    document.getElementById('ustat-staff').textContent   = allUsers.filter(u => u.role==='staff').length;
+    document.getElementById('ustat-pending').textContent = allUsers.filter(u => u.role==='pending').length;
+    document.getElementById('ustat-inactive').textContent= allUsers.filter(u => !u.is_active).length;
+
+    const filtered = roleFilter ? allUsers.filter(u => u.role === roleFilter) : allUsers;
+
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="loading-row">📭 Tidak ada user</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(u => {
+      const initial = (u.full_name || u.username || '?')[0].toUpperCase();
+      const joined  = u.joined_at ? u.joined_at.slice(0,10) : '—';
+      const activeBadge = u.is_active
+        ? '<span class="badge badge-ok">Aktif</span>'
+        : '<span class="badge badge-fail">Nonaktif</span>';
+      const roleBadge = {
+        dev:     '<span class="badge badge-dev">Dev</span>',
+        staff:   '<span class="badge badge-staff">Staff</span>',
+        pending: '<span class="badge badge-pending">Pending</span>',
+      }[u.role] || `<span class="badge badge-pending">${esc(u.role)}</span>`;
+
+      return `<tr>
+        <td>
+          <div class="user-info">
+            <div class="avatar">${initial}</div>
+            <div class="user-info-text">
+              <span class="user-info-name">${esc(u.full_name||'N/A')}</span>
+              <span class="user-info-sub">ID: ${u.user_id}</span>
+            </div>
+          </div>
+        </td>
+        <td>${u.username ? '@'+esc(u.username) : '-'}</td>
+        <td><code>${u.user_id}</code></td>
+        <td>${roleBadge}</td>
+        <td>${activeBadge}</td>
+        <td>${joined}</td>
+        <td>${u.approved_by ? '<code>'+esc(String(u.approved_by))+'</code>' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+  } catch (err) {
+    console.error('UserMgmt error:', err);
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⚠️ Gagal memuat data</td></tr>';
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────
+function esc(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function statusBadge(s) {
+  return { active:'badge-active', paused:'badge-warn', completed:'badge-ok', archived:'badge-pending' }[s]||'badge-pending';
+}
+function urlStatusBadge(s) {
+  if (s==='OK') return 'badge-ok';
+  if (s==='PENDING') return 'badge-pending';
+  if (['HTTP_ERR','TIMEOUT'].includes(s)) return 'badge-warn';
+  return 'badge-fail';
+}
+
+// ── Bootstrap ──────────────────────────────────────────────
+initAuth();

@@ -1,0 +1,11 @@
+# Env vars lokal (berisi credentials — JANGAN di-commit)
+.env
+
+# Build output
+dist/
+
+# Node modules (jika pernah npm install lokal)
+node_modules/
+
+# macOS
+.DS_Store

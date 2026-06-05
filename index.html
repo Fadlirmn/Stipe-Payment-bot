@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stripe Verif Bot — Dashboard</title>
+  <meta name="description" content="Dashboard monitoring verifikasi URL Stripe harian" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <!-- Firebase JS SDK v10 -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="/css/dashboard.css" />
+</head>
+<body>
+
+  <!-- ══════════════════════════════════════════════════════════
+       LOGIN SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="login-logo">⚡</div>
+      <h1 class="login-title">Stripe Verif Bot</h1>
+      <p class="login-subtitle">Dashboard Monitoring</p>
+      <p class="login-desc">Login dengan akun Telegram yang terdaftar sebagai <strong>Dev</strong> atau <strong>Staff</strong>.</p>
+      <div id="telegram-login-btn"></div>
+      <p id="login-error" class="login-error" style="display:none"></p>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       MAIN DASHBOARD (hidden until authenticated)
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="app" style="display:none; width:100%;">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-icon">⚡</span>
+        <span class="brand-text">Stripe Verif</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-section="overview">
+          <span class="nav-icon">🏠</span> Overview
+        </a>
+        <a href="#" class="nav-item" data-section="tasks">
+          <span class="nav-icon">📋</span> Task Manager
+        </a>
+        <a href="#" class="nav-item" data-section="staff">
+          <span class="nav-icon">👥</span> Staff Monitor
+        </a>
+        <a href="#" class="nav-item" data-section="taskuser">
+          <span class="nav-icon">📊</span> Task per User
+        </a>
+        <a href="#" class="nav-item" data-section="urllog">
+          <span class="nav-icon">🔗</span> URL Log
+        </a>
+        <a href="#" class="nav-item" data-section="analytics">
+          <span class="nav-icon">📈</span> Analytics
+        </a>
+        <!-- Hanya tampil untuk role dev -->
+        <a href="#" class="nav-item nav-dev-only" data-section="usermgmt" style="display:none">
+          <span class="nav-icon">⚙️</span> User Management
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-user" id="sidebar-user">—</div>
+        <button id="logoutBtn" class="btn-logout">Logout</button>
+        <br/>
+        <span id="clock">--:--:--</span><br/>
+        <small>WIB (UTC+7)</small>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main-content">
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+          <h1 class="page-title" id="pageTitle">Overview</h1>
+        </div>
+        <div class="top-bar-right">
+          <input type="date" id="datePicker" class="date-picker" />
+          <button class="btn-refresh" id="refreshBtn" title="Refresh">🔄</button>
+          <div class="status-dot" id="statusDot" title="Firebase Status"></div>
+        </div>
+      </header>
+
+      <!-- ── OVERVIEW ── -->
+      <section class="section active" id="section-overview">
+        <div class="stat-grid">
+          <div class="stat-card"><div class="stat-icon">🔗</div>
+            <div class="stat-body"><div class="stat-value" id="val-total">—</div><div class="stat-label">Total URL</div></div></div>
+          <div class="stat-card success"><div class="stat-icon">✅</div>
+            <div class="stat-body"><div class="stat-value" id="val-ok">—</div><div class="stat-label">Verified OK</div></div></div>
+          <div class="stat-card danger"><div class="stat-icon">❌</div>
+            <div class="stat-body"><div class="stat-value" id="val-fail">—</div><div class="stat-label">Failed</div></div></div>
+          <div class="stat-card warning"><div class="stat-icon">⏳</div>
+            <div class="stat-body"><div class="stat-value" id="val-pending">—</div><div class="stat-label">Pending</div></div></div>
+          <div class="stat-card info"><div class="stat-icon">📋</div>
+            <div class="stat-body"><div class="stat-value" id="val-tasks">—</div><div class="stat-label">Active Tasks</div></div></div>
+          <div class="stat-card purple"><div class="stat-icon">👥</div>
+            <div class="stat-body"><div class="stat-value" id="val-staff">—</div><div class="stat-label">Total Staff</div></div></div>
+        </div>
+        <div class="card overview-progress-card">
+          <div class="card-header">📊 Completion Rate Hari Ini</div>
+          <div class="progress-ring-wrap">
+            <canvas id="ringChart" width="200" height="200"></canvas>
+            <div class="ring-label"><span id="ring-pct">—</span>%<small>Selesai</small></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── TASK MANAGER ── -->
+      <section class="section" id="section-tasks">
+        <div class="card">
+          <div class="card-header">📋 Daftar Task</div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Task ID</th><th>Judul</th><th>Sheet Tab</th><th>Progress</th><th>Deadline</th><th>Repeat</th><th>Status</th></tr></thead>
+              <tbody id="task-tbody"><tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── STAFF MONITOR ── -->
+      <section class="section" id="section-staff">
+        <div class="card">
+          <div class="card-header">👥 Leaderboard Staff</div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Nama</th><th>Username</th><th>Submitted</th><th>✅ OK</th><th>❌ Gagal</th><th>Rate</th></tr></thead>
+              <tbody id="staff-tbody"><tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── TASK PER USER ── -->
+      <section class="section" id="section-taskuser">
+        <div class="card">
+          <div class="card-header">📊 Progress Task per User</div>
+          <div class="user-selector-wrap">
+            <label for="user-select">Pilih Staff:</label>
+            <select id="user-select" class="user-select">
+              <option value="">— pilih user —</option>
+            </select>
+            <button class="btn-filter" id="btn-load-taskuser">Lihat</button>
+          </div>
+          <div id="task-user-summary" class="task-user-summary" style="display:none"></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Task</th><th>Tab Sheet</th><th>Submitted</th>
+                  <th>✅ OK</th><th>❌ Gagal</th><th>Rate</th><th>Progress</th>
+                </tr>
+              </thead>
+              <tbody id="taskuser-tbody"><tr><td colspan="7" class="loading-row">👆 Pilih staff untuk melihat progress</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── URL LOG ── -->
+      <section class="section" id="section-urllog">
+        <div class="card">
+          <div class="card-header">
+            🔗 URL Log
+            <div class="filter-row">
+              <select id="filter-status" class="filter-select">
+                <option value="">Semua Status</option>
+                <option value="OK">✅ OK</option>
+                <option value="HTTP_ERR">🟡 HTTP Error</option>
+                <option value="TIMEOUT">🟡 Timeout</option>
+                <option value="DOMAIN_ERR">🔴 Domain Error</option>
+                <option value="PENDING">⚪ Pending</option>
+              </select>
+              <button class="btn-filter" id="btn-filter-url">Filter</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>#</th><th>Task</th><th>Akun</th><th>Payment URL</th><th>Status</th><th>HTTP</th><th>Verified By</th><th>Verified At</th></tr></thead>
+              <tbody id="url-tbody"><tr><td colspan="8" class="loading-row">⏳ Memuat data...</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="url-pagination"></div>
+        </div>
+      </section>
+
+      <!-- ── ANALYTICS ── -->
+      <section class="section" id="section-analytics">
+        <div class="card">
+          <div class="card-header">📈 Tren 7 Hari Terakhir</div>
+          <canvas id="lineChart" height="100"></canvas>
+        </div>
+      </section>
+
+      <!-- ── USER MANAGEMENT (dev only) ── -->
+      <section class="section" id="section-usermgmt">
+        <div class="card">
+          <div class="card-header">
+            ⚙️ User Management
+            <div class="filter-row role-filter-row" id="role-filter-row">
+              <button class="role-tab active" data-role="">Semua</button>
+              <button class="role-tab" data-role="dev">Dev</button>
+              <button class="role-tab" data-role="staff">Staff</button>
+              <button class="role-tab" data-role="pending">Pending</button>
+            </div>
+          </div>
+          <div class="user-stat-grid" id="user-stat-grid">
+            <div class="user-stat"><div class="user-stat-val" id="ustat-total">—</div><div class="user-stat-lbl">Total User</div></div>
+            <div class="user-stat"><div class="user-stat-val" id="ustat-dev">—</div><div class="user-stat-lbl">Dev</div></div>
+            <div class="user-stat"><div class="user-stat-val" id="ustat-staff">—</div><div class="user-stat-lbl">Staff</div></div>
+            <div class="user-stat"><div class="user-stat-val" id="ustat-pending">—</div><div class="user-stat-lbl">Pending</div></div>
+            <div class="user-stat"><div class="user-stat-val" id="ustat-inactive">—</div><div class="user-stat-lbl">Inactive</div></div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>User</th><th>Username</th><th>Telegram ID</th>
+                  <th>Role</th><th>Status</th><th>Joined</th><th>Approved By</th>
+                </tr>
+              </thead>
+              <tbody id="usermgmt-tbody"><tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div><!-- /#app -->
+
+  <!-- Firebase config — di-inject saat build oleh build.js dari Vercel env vars -->
+  <script>
+    const firebaseConfig = {
+      apiKey:            "%%FIREBASE_API_KEY%%",
+      authDomain:        "%%FIREBASE_AUTH_DOMAIN%%",
+      projectId:         "%%FIREBASE_PROJECT_ID%%",
+      storageBucket:     "%%FIREBASE_STORAGE_BUCKET%%",
+      messagingSenderId: "%%FIREBASE_MESSAGING_SENDER_ID%%",
+      appId:             "%%FIREBASE_APP_ID%%",
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Bot username untuk Telegram Login Widget (public, aman di client)
+    const TELEGRAM_BOT_USERNAME = "%%TELEGRAM_BOT_USERNAME%%";
+  </script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
