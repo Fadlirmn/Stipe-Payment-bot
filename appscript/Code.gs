@@ -90,18 +90,23 @@ function doPost(e) {
 
     for (var i = 0; i < values.length; i++) {
       if (values[i][COL_URL] === data.stripe_url) {
-        // Tulis status ke Kolom F
+        // Tulis status ke Kolom F (Kolom ke-6)
         sheet.getRange(i + 1, COL_STATUS + 1).setValue(data.status);
+
+        // Tulis info staff ke Kolom G (Kolom ke-7, sebelahnya) jika disediakan
+        if (data.staff_info !== undefined) {
+          sheet.getRange(i + 1, COL_STATUS + 2).setValue(data.staff_info);
+        }
 
         // Warna baris secara dinamis
         var statusUpper = String(data.status).toUpperCase();
         var color = "#ffffff";
-        if (statusUpper.indexOf("SUCCESS") === 0) {
+        if (statusUpper === "SUCCESS") {
           color = "#b7e1cd"; // Hijau muda jika sukses
-        } else if (statusUpper.indexOf("ASSIGNED") === 0) {
+        } else if (statusUpper === "ASSIGNED") {
           color = "#c9daf8"; // Biru muda jika sedang di-assign/proses
-        } else {
-          color = "#f8cecc"; // Merah muda jika gagal/error
+        } else if (statusUpper === "FAILED" || statusUpper === "SKIPPED") {
+          color = "#f8cecc"; // Merah muda jika gagal/error atau dilewati
         }
         sheet.getRange(i + 1, 1, 1, sheet.getLastColumn()).setBackground(color);
 

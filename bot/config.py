@@ -41,5 +41,6 @@ SHEET_ACC_COLUMN  = "Account"
 SHEET_NOTE_COLUMN = "Notes"
 
 # ── Dashboard URL ─────────────────────────────────────────
-DASHBOARD_URL: str = os.getenv("DASHBOARD_URL", "https://stripe-verif-dashboard.vercel.app")
+DASHBOARD_URL: str = os.getenv("DASHBOARD_URL", "https://stipe-payment-bot.vercel.app/")
+
 

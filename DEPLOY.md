@@ -195,7 +195,7 @@ Agar Telegram Login Widget berfungsi, domain dashboard harus didaftarkan ke bot:
 
 1. Buka [@BotFather](https://t.me/BotFather) → `/mybots` → pilih bot
 2. **Bot Settings** → **Domain** → **Add domain**
-3. Masukkan domain Vercel: `stripe-verif-dashboard.vercel.app`
+3. Masukkan domain Vercel: `stipe-payment-bot.vercel.app`
 
 > [!IMPORTANT]
 > Langkah ini wajib dilakukan. Widget tidak akan berfungsi jika domain belum didaftarkan.
@@ -219,12 +219,12 @@ Ikuti prompt:
 - Set up and deploy? → **Y**
 - Which scope? → pilih akun Anda
 - Link to existing project? → **N** (buat baru)
-- Project name → `stripe-verif-dashboard`
+- Project name → `stipe-payment-bot`
 - Directory → `./` (enter)
 
 Setelah selesai, Vercel akan memberi URL:
 ```
-https://stripe-verif-dashboard.vercel.app
+https://stipe-payment-bot.vercel.app/
 ```
 
 **Opsi B — via GitHub:**

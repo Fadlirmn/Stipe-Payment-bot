@@ -86,7 +86,7 @@ def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = Non
     return results
 
 
-async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "Sheet1") -> bool:
+async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "Sheet1", staff_info: Optional[str] = None) -> bool:
     """
     Mengupdate status baris di Google Sheet via Apps Script Web App (doPost).
     """
@@ -100,13 +100,15 @@ async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "She
         "status": status,
         "tab": tab_name
     }
+    if staff_info is not None:
+        payload["staff_info"] = staff_info
 
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             resp = await client.post(APPS_SCRIPT_URL, json=payload)
             resp.raise_for_status()
             res_json = resp.json()
-            logger.info(f"[SheetParser] Update status Sheet: url={stripe_url}, status={status}, resp={res_json}")
+            logger.info(f"[SheetParser] Update status Sheet: url={stripe_url}, status={status}, staff={staff_info}, resp={res_json}")
             return res_json.get("status") == "updated"
     except Exception as exc:
         logger.error(f"[SheetParser] Gagal memanggil Apps Script updateStatus: {exc}")

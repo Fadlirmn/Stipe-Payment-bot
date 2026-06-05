@@ -113,7 +113,7 @@ npm i -g vercel
 vercel --prod
 ```
 
-Dashboard akan live di `https://stripe-verif-dashboard.vercel.app` (atau domain custom Anda).
+Dashboard akan live di `https://stipe-payment-bot.vercel.app/` (atau domain custom Anda).
 
 ---
 
