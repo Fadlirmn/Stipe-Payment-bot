@@ -129,19 +129,17 @@ async def add_sheet_url(task_id: str, date: str, account: str,
                          payment_url: str, notes: str) -> str:
     """Tambah URL ke Firestore. Return doc_id."""
     from datetime import datetime
+    import hashlib
     from bot.config import TZ
 
-    # Deduplicate check
-    existing = await (
-        sheet_urls_col()
-        .where("task_id", "==", task_id)
-        .where("date", "==", date)
-        .where("payment_url", "==", payment_url)
-        .limit(1)
-        .get()
-    )
-    if existing:
-        return existing[0].id
+    # Buat ID dokumen unik berbasis hash md5 dari task_id dan payment_url
+    doc_id = hashlib.md5(f"{task_id}_{payment_url}".encode("utf-8")).hexdigest()
+    ref = sheet_urls_col().document(doc_id)
+
+    doc_snap = await ref.get()
+    if doc_snap.exists:
+        # Jika sudah ada, jangan timpa datanya untuk mencegah hilangnya status verifikasi jika disinkronkan ulang
+        return doc_id
 
     data = {
         "task_id":     task_id,
@@ -156,8 +154,8 @@ async def add_sheet_url(task_id: str, date: str, account: str,
         "verified_at": None,
         "created_at":  datetime.now(TZ).isoformat(),
     }
-    ref = await sheet_urls_col().add(data)
-    return ref[1].id
+    await ref.set(data)
+    return doc_id
 
 
 async def get_sheet_url(doc_id: str) -> dict | None:
@@ -198,6 +196,108 @@ async def get_next_pending_url(task_id: str, date: str) -> dict | None:
     d = docs[0].to_dict()
     d["id"] = docs[0].id
     return d
+
+
+async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> dict | None:
+    """
+    Mengambil URL yang sedang diproses oleh staff ini, atau mengklaim URL PENDING berikutnya
+    menggunakan transaksi Firestore agar tidak terjadi klaim ganda oleh staff lain.
+    Juga mendeteksi dan mengklaim ulang URL berstatus PROCESSING yang sudah kedaluwarsa (> 5 menit).
+    """
+    from google.cloud.firestore import async_transactional
+    from datetime import datetime, timedelta
+    from bot.config import TZ
+
+    db_client = get_db()
+    user_id_str = str(user_id)
+
+    # 1. Cek apakah staff ini sudah memiliki URL berstatus PROCESSING
+    user_processing_docs = await (
+        sheet_urls_col()
+        .where("task_id", "==", task_id)
+        .where("date", "==", date_str)
+        .where("status", "==", "PROCESSING")
+        .where("verified_by", "==", user_id_str)
+        .limit(1)
+        .get()
+    )
+    if user_processing_docs:
+        d = user_processing_docs[0].to_dict()
+        d["id"] = user_processing_docs[0].id
+        return d
+
+    # 2. Cari kandidat URL PENDING atau PROCESSING kedaluwarsa, lalu klaim dengan transaksi
+    for _ in range(3): # Coba 3 kali jika ada konflik transaksi
+        now = datetime.now(TZ)
+        
+        # Cari PENDING
+        pending_docs = await (
+            sheet_urls_col()
+            .where("task_id", "==", task_id)
+            .where("date", "==", date_str)
+            .where("status", "==", "PENDING")
+            .limit(1)
+            .get()
+        )
+        
+        doc_id = None
+        if pending_docs:
+            doc_id = pending_docs[0].id
+        else:
+            # Jika tidak ada yang PENDING, cari PROCESSING yang sudah ditinggal (> 5 menit)
+            five_minutes_ago = (now - timedelta(minutes=5)).isoformat()
+            abandoned_docs = await (
+                sheet_urls_col()
+                .where("task_id", "==", task_id)
+                .where("date", "==", date_str)
+                .where("status", "==", "PROCESSING")
+                .where("assigned_at", "<", five_minutes_ago)
+                .limit(1)
+                .get()
+            )
+            if abandoned_docs:
+                doc_id = abandoned_docs[0].id
+                
+        if not doc_id:
+            return None # Habis
+            
+        doc_ref = sheet_urls_col().document(doc_id)
+        
+        @async_transactional
+        async def _claim_tx(transaction, doc_ref):
+            doc_snap = await transaction.get(doc_ref)
+            if not doc_snap.exists:
+                return None
+                
+            data = doc_snap.to_dict()
+            curr_status = data.get("status")
+            curr_assigned_at = data.get("assigned_at")
+            
+            # Validasi kelayakan klaim dalam transaksi
+            is_pending = (curr_status == "PENDING")
+            is_abandoned = (
+                curr_status == "PROCESSING" and 
+                curr_assigned_at and 
+                curr_assigned_at < (datetime.now(TZ) - timedelta(minutes=5)).isoformat()
+            )
+            
+            if is_pending or is_abandoned:
+                transaction.update(doc_ref, {
+                    "status": "PROCESSING",
+                    "verified_by": user_id_str,
+                    "assigned_at": datetime.now(TZ).isoformat()
+                })
+                data["id"] = doc_snap.id
+                data["status"] = "PROCESSING"
+                data["verified_by"] = user_id_str
+                return data
+            return None
+            
+        claimed = await _claim_tx(db_client.transaction(), doc_ref)
+        if claimed:
+            return claimed
+            
+    return None
 
 
 async def list_sheet_urls(task_id: str | None = None, date: str | None = None,

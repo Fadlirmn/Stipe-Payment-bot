@@ -138,10 +138,13 @@ async def _show_next_pending_url(
             await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
             return
 
-    url_obj = await fdb.get_next_pending_url(task_id, today)
+    url_obj = await fdb.get_or_claim_next_url(task_id, today, user_id)
 
     if not url_obj:
         total   = await fdb.count_sheet_urls(task_id, today)
+        pending = await fdb.count_sheet_urls(task_id, today, status="PENDING")
+        processing = await fdb.count_sheet_urls(task_id, today, status="PROCESSING")
+        done = max(0, total - pending - processing)
         ok      = await fdb.count_sheet_urls(task_id, today, status="OK")
         text = (
             f"🎉 *Semua URL telah diproses!*\n"
@@ -149,7 +152,7 @@ async def _show_next_pending_url(
             f"Task : {task_id}\n"
             f"Total: {total} URL\n"
             f"✅ Valid : {ok}\n"
-            f"❌ Gagal : {total - ok}\n\n"
+            f"❌ Lainnya: {done - ok}\n\n"
             f"Terima kasih telah menyelesaikan verifikasi hari ini! 🙌"
         )
         msg = update.callback_query.message if update.callback_query else update.message
@@ -157,7 +160,9 @@ async def _show_next_pending_url(
         return
 
     total = await fdb.count_sheet_urls(task_id, today)
-    done  = await fdb.count_sheet_urls(task_id, today, status="OK")
+    pending = await fdb.count_sheet_urls(task_id, today, status="PENDING")
+    processing = await fdb.count_sheet_urls(task_id, today, status="PROCESSING")
+    done = max(0, total - pending - processing)
     bar   = progress_bar(done, total)
 
 
