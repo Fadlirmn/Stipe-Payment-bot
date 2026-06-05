@@ -83,7 +83,8 @@ function doPost(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
   if (data.action === "updateStatus") {
-    var sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+    var tabName = data.tab || "Sheet1";
+    var sheet = ss.getSheetByName(tabName) || ss.getSheets()[0];
     var range = sheet.getDataRange();
     var values = range.getValues();
 
@@ -92,11 +93,19 @@ function doPost(e) {
         // Tulis status ke Kolom F
         sheet.getRange(i + 1, COL_STATUS + 1).setValue(data.status);
 
-        // Warna baris
-        var color = data.status === "SUCCESS" ? "#b7e1cd" : "#f8cecc";
+        // Warna baris secara dinamis
+        var statusUpper = String(data.status).toUpperCase();
+        var color = "#ffffff";
+        if (statusUpper.indexOf("SUCCESS") === 0) {
+          color = "#b7e1cd"; // Hijau muda jika sukses
+        } else if (statusUpper.indexOf("ASSIGNED") === 0) {
+          color = "#c9daf8"; // Biru muda jika sedang di-assign/proses
+        } else {
+          color = "#f8cecc"; // Merah muda jika gagal/error
+        }
         sheet.getRange(i + 1, 1, 1, sheet.getLastColumn()).setBackground(color);
 
-        return jsonOut({ status: "updated" });
+        return jsonOut({ status: "updated", row: i + 1 });
       }
     }
     return jsonOut({ status: "not_found" });

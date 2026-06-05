@@ -84,3 +84,30 @@ def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = Non
 
     logger.info(f"[SheetParser] {len(results)} URL valid untuk tanggal {today}")
     return results
+
+
+async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "Sheet1") -> bool:
+    """
+    Mengupdate status baris di Google Sheet via Apps Script Web App (doPost).
+    """
+    if not APPS_SCRIPT_URL:
+        logger.warning("[SheetParser] APPS_SCRIPT_URL belum diset, skip update_sheet_status")
+        return False
+
+    payload = {
+        "action": "updateStatus",
+        "stripe_url": stripe_url,
+        "status": status,
+        "tab": tab_name
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.post(APPS_SCRIPT_URL, json=payload)
+            resp.raise_for_status()
+            res_json = resp.json()
+            logger.info(f"[SheetParser] Update status Sheet: url={stripe_url}, status={status}, resp={res_json}")
+            return res_json.get("status") == "updated"
+    except Exception as exc:
+        logger.error(f"[SheetParser] Gagal memanggil Apps Script updateStatus: {exc}")
+        return False

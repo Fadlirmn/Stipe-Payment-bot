@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
 import bot.firebase_db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
-from bot.services.sheet_parser import fetch_today_urls
+from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
 from bot.services.url_verifier import verify_url
 from bot.utils.keyboards import task_list_keyboard, url_action_keyboard, back_keyboard
 from bot.utils.formatters import progress_bar, now_wib, status_badge
@@ -108,6 +108,8 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
             payment_url=row["payment_url"],
             notes=row["notes"],
         )
+        # Tandai sebagai ASSIGNED di Google Sheet
+        await update_sheet_status(row["payment_url"], "ASSIGNED", tab_name=tab)
         count += 1
     return count, None
 
@@ -206,6 +208,13 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         verified_at=now_wib().isoformat(),
     )
 
+    # Kirim update status ke Google Sheet beserta info staff
+    staff_identifier = f"@{user.get('username')}" if user.get('username') else f"{user.get('full_name') or user['user_id']}"
+    sheet_status = f"{'SUCCESS' if result.is_ok else 'FAILED'} ({staff_identifier})"
+    task = await fdb.get_task(task_id)
+    tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+    await update_sheet_status(payment_url, sheet_status, tab_name=tab)
+
     await fdb.upsert_progress(
         task_id=task_id, user_id=user["user_id"], date=today,
         submitted_delta=1,
@@ -244,6 +253,14 @@ async def cb_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_by=user["user_id"],
             verified_at=now_wib().isoformat(),
         )
+
+        # Kirim update status ke Google Sheet beserta info staff
+        staff_identifier = f"@{user.get('username')}" if user.get('username') else f"{user.get('full_name') or user['user_id']}"
+        sheet_status = f"SKIPPED ({staff_identifier})"
+        task = await fdb.get_task(url_obj["task_id"])
+        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+        await update_sheet_status(url_obj["payment_url"], sheet_status, tab_name=tab)
+
         await _show_next_pending_url(
             update, context, url_obj["task_id"], user["user_id"], url_obj["date"]
         )
