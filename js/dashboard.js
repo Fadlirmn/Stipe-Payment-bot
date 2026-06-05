@@ -36,7 +36,7 @@ function initAuth() {
           return;
         }
 
-        if (!['dev', 'staff'].includes(userData.role)) {
+        if (!['dev', 'admin', 'staff'].includes(userData.role)) {
           showLoginError('🚫 Akses ditolak. Akun Anda masih pending atau belum diapprove.');
           firebase.auth().signOut();
           showLoginLoading(false);
