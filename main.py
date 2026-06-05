@@ -25,6 +25,7 @@ async def post_init(application: Application) -> None:
         BotCommand("menu", "Buka menu utama"),
         BotCommand("help", "Panduan lengkap"),
         BotCommand("me", "Info profil saya"),
+        BotCommand("setemail", "Hubungkan email untuk dashboard"),
         BotCommand("verif", "Mulai verifikasi URL"),
         BotCommand("progress", "Progress verifikasi saya"),
         BotCommand("history", "Riwayat verifikasi"),

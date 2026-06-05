@@ -6,7 +6,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
-from bot.firebase_db import get_user
+from bot.firebase_db import get_user, update_user
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.utils.keyboards import main_menu_keyboard, back_keyboard
 from bot.utils.formatters import format_date_id, role_badge, now_wib
@@ -77,11 +77,40 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Nama     : {user.get('full_name')}\n"
         f"Username : @{user.get('username') or 'N/A'}\n"
         f"ID       : `{user.get('user_id')}`\n"
+        f"Email    : `{user.get('email') or '❌ Belum diatur'}`\n"
         f"Role     : {role_badge(user.get('role',''))}\n"
         f"Status   : {'✅ Aktif' if user.get('is_active') else '⛔ Nonaktif'}\n"
         f"Bergabung: {str(user.get('joined_at',''))[:10]}"
     )
     await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+
+
+@require_approved
+async def cmd_setemail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "⚠️ *Penggunaan:* `/setemail <email>`\n\n"
+            "Contoh: `/setemail nama@email.com`\n\n"
+            "_Email ini digunakan untuk mendaftar dan login ke Dashboard Vercel._",
+            parse_mode="Markdown"
+        )
+        return
+
+    email = args[0].strip().lower()
+    import re
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        await update.message.reply_text("❌ Format email tidak valid.")
+        return
+
+    await update_user(update.effective_user.id, email=email)
+
+    await update.message.reply_text(
+        f"✅ *Email berhasil disimpan!*\n\n"
+        f"Email: `{email}`\n\n"
+        f"Anda sekarang dapat menggunakan email ini untuk Mendaftar/Masuk di Dashboard.",
+        parse_mode="Markdown"
+    )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,7 +124,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/verif   — Mulai verifikasi URL dari sheet\n"
         "/progress — Progress saya hari ini\n"
         "/history  — Riwayat verifikasi\n"
-        "/me       — Info profil saya\n\n"
+        "/me       — Info profil saya\n"
+        "/setemail — Hubungkan email untuk dashboard\n\n"
         "*Admin/Dev:*\n"
         "/config\\_task — Konfigurasi task\n"
         "/report       — Laporan tim\n"
@@ -126,6 +156,7 @@ def get_handlers():
         CommandHandler("start", cmd_start),
         CommandHandler("menu",  cmd_menu),
         CommandHandler("me",    cmd_me),
+        CommandHandler("setemail", cmd_setemail),
         CommandHandler("help",  cmd_help),
         CallbackQueryHandler(cb_menu_main, pattern="^menu:main$"),
         CallbackQueryHandler(cb_menu_help, pattern="^menu:help$"),
