@@ -15,6 +15,9 @@ def main_menu_keyboard(role: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔗 Verif URL Hari Ini", callback_data="menu:verif"),
             InlineKeyboardButton("📖 History", callback_data="menu:history"),
         ],
+        [
+            InlineKeyboardButton("📧 Set Email Dashboard", callback_data="menu:setemail_info"),
+        ],
     ]
 
     if role in ("admin", "dev"):

@@ -151,6 +151,22 @@ async def cb_menu_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cb_menu_setemail_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    text = (
+        "📧 *Set Email Dashboard*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Untuk mendaftarkan atau memperbarui email dashboard Anda, silakan ketik perintah berikut:\n\n"
+        "`/setemail <email_anda>`\n\n"
+        "Contoh:\n"
+        "`/setemail budi@email.com`\n\n"
+        "_Email ini akan divalidasi saat Anda mendaftar atau masuk ke Web Dashboard._"
+    )
+    await update.callback_query.message.reply_text(
+        text, parse_mode="Markdown", reply_markup=back_keyboard()
+    )
+
+
 def get_handlers():
     return [
         CommandHandler("start", cmd_start),
@@ -160,4 +176,5 @@ def get_handlers():
         CommandHandler("help",  cmd_help),
         CallbackQueryHandler(cb_menu_main, pattern="^menu:main$"),
         CallbackQueryHandler(cb_menu_help, pattern="^menu:help$"),
+        CallbackQueryHandler(cb_menu_setemail_info, pattern="^menu:setemail_info$"),
     ]
