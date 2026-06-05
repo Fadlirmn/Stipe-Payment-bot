@@ -173,7 +173,7 @@ async def _show_next_pending_url(
         f"🔗 URL:\n`{url_obj['payment_url']}`\n\n"
         f"Klik *Verifikasi Sekarang* untuk memeriksa URL ini."
     )
-    kb  = url_action_keyboard(url_obj["id"])
+    kb  = url_action_keyboard(url_obj["id"], url_obj["payment_url"])
     msg = update.callback_query.message if update.callback_query else update.message
     if update.callback_query:
         try:
@@ -208,12 +208,12 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         verified_at=now_wib().isoformat(),
     )
 
-    # Kirim update status ke Google Sheet beserta info staff
+    # Kirim update status ke Google Sheet (kolom F) dan info staff (kolom G)
     staff_identifier = f"@{user.get('username')}" if user.get('username') else f"{user.get('full_name') or user['user_id']}"
-    sheet_status = f"{'SUCCESS' if result.is_ok else 'FAILED'} ({staff_identifier})"
+    sheet_status = "SUCCESS" if result.is_ok else "FAILED"
     task = await fdb.get_task(task_id)
     tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-    await update_sheet_status(payment_url, sheet_status, tab_name=tab)
+    await update_sheet_status(payment_url, sheet_status, tab_name=tab, staff_info=staff_identifier)
 
     await fdb.upsert_progress(
         task_id=task_id, user_id=user["user_id"], date=today,
@@ -254,12 +254,12 @@ async def cb_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_at=now_wib().isoformat(),
         )
 
-        # Kirim update status ke Google Sheet beserta info staff
+        # Kirim update status ke Google Sheet (kolom F) dan info staff (kolom G)
         staff_identifier = f"@{user.get('username')}" if user.get('username') else f"{user.get('full_name') or user['user_id']}"
-        sheet_status = f"SKIPPED ({staff_identifier})"
+        sheet_status = "SKIPPED"
         task = await fdb.get_task(url_obj["task_id"])
         tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-        await update_sheet_status(url_obj["payment_url"], sheet_status, tab_name=tab)
+        await update_sheet_status(url_obj["payment_url"], sheet_status, tab_name=tab, staff_info=staff_identifier)
 
         await _show_next_pending_url(
             update, context, url_obj["task_id"], user["user_id"], url_obj["date"]
