@@ -40,7 +40,13 @@ def db() -> firestore.AsyncClient:
             cred = credentials.Certificate(FIREBASE_CREDENTIALS_JSON)
             firebase_admin.initialize_app(cred, {"projectId": FIREBASE_PROJECT_ID})
             logger.info(f"[Firebase] Initialized project={FIREBASE_PROJECT_ID}")
-        _db = firestore.AsyncClient()
+        # Ambil credentials dari firebase_admin app yang sudah diinit
+        google_cred = firebase_admin.get_app().credential.get_credential()
+        _db = firestore.AsyncClient(
+            project=FIREBASE_PROJECT_ID,
+            credentials=google_cred,
+        )
+        logger.info(f"[Firebase] Initialized project={FIREBASE_PROJECT_ID}")
     return _db
 
 
