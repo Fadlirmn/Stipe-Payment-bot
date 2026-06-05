@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
 import bot.firebase_db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
-from bot.services.sheet_parser import fetch_today_urls
+from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
 from bot.services.url_verifier import verify_url
 from bot.utils.keyboards import task_list_keyboard, url_action_keyboard, back_keyboard
 from bot.utils.formatters import progress_bar, now_wib, status_badge
@@ -108,6 +108,8 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
             payment_url=row["payment_url"],
             notes=row["notes"],
         )
+        # Tandai sebagai ASSIGNED di Google Sheet
+        await update_sheet_status(row["payment_url"], "ASSIGNED", tab_name=tab)
         count += 1
     return count, None
 
