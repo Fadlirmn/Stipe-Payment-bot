@@ -12,27 +12,35 @@ from bot.scheduler import setup_scheduler
 from bot.handlers import start, task, verif, admin
 
 
-def build_application() -> Application:
-    app = Application.builder().token(BOT_TOKEN).build()
+
+async def post_init(application: Application) -> None:
+    await init_db()
+    logger.info("✅ Firebase Firestore connected")
+    
+    scheduler = setup_scheduler(application)
+    scheduler.start()
+    logger.info("✅ Scheduler started")
+
+
+def main():
+    logger.info("🚀 Starting Stripe Verif Bot (Firebase)...")
+    
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
+    
     for handler in start.get_handlers():   app.add_handler(handler)
     for handler in task.get_handlers():    app.add_handler(handler)
     for handler in verif.get_handlers():   app.add_handler(handler)
     for handler in admin.get_handlers():   app.add_handler(handler)
-    return app
-
-
-async def main():
-    logger.info("🚀 Starting Stripe Verif Bot (Firebase)...")
-    await init_db()
-    logger.info("✅ Firebase Firestore connected")
-
-    app = build_application()
-    scheduler = setup_scheduler(app)
-    scheduler.start()
-    logger.info("✅ Scheduler started")
+    
     logger.info("✅ Bot polling started")
-    await app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+
