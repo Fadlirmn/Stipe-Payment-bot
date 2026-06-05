@@ -18,7 +18,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg   = update.effective_user
 
     if user.get("role") == "pending":
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             f"👋 Halo *{tg.first_name}*!\n\n"
             f"Akun Anda sedang menunggu persetujuan admin.\n"
             f"Mohon tunggu konfirmasi sebelum menggunakan bot ini.",
@@ -61,7 +61,7 @@ async def _show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         f"Pilih menu di bawah:"
     )
     kb  = main_menu_keyboard(user.get("role", "staff"))
-    msg = update.message or update.callback_query.message
+    msg = update.effective_message
     if update.callback_query:
         await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
     else:
@@ -81,7 +81,7 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Status   : {'✅ Aktif' if user.get('is_active') else '⛔ Nonaktif'}\n"
         f"Bergabung: {str(user.get('joined_at',''))[:10]}"
     )
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,7 +105,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/approve — Approve user baru\n"
         "/setrole — Ubah role user"
     )
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 
 
 async def cb_menu_main(update: Update, context: ContextTypes.DEFAULT_TYPE):

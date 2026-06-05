@@ -21,7 +21,7 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = await fdb.list_tasks(status="active")
 
     if not tasks:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "📭 Tidak ada task aktif hari ini.",
             reply_markup=back_keyboard()
         )
@@ -51,7 +51,7 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     lines.append("\n\n👉 Gunakan /verif untuk memulai verifikasi URL.")
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "\n".join(lines), parse_mode="Markdown", reply_markup=back_keyboard()
     )
 
@@ -64,7 +64,7 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_progs = [p for p in progs if p["date"] == today]
 
     if not today_progs:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "📊 Belum ada progress hari ini.\nMulai dengan /verif",
             reply_markup=back_keyboard()
         )
@@ -81,7 +81,7 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   ❌ Gagal : {p['verified_fail']}"
         )
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "\n".join(lines), parse_mode="Markdown", reply_markup=back_keyboard()
     )
 
@@ -94,7 +94,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     progs = await fdb.list_progress_by_user(user["user_id"], limit=days * 5)
 
     if not progs:
-        await update.message.reply_text("📖 Belum ada riwayat.", reply_markup=back_keyboard())
+        await update.effective_message.reply_text("📖 Belum ada riwayat.", reply_markup=back_keyboard())
         return
 
     lines = [f"📖 *RIWAYAT {days} HARI TERAKHIR*\n━━━━━━━━━━━━━━━━━━━━"]
@@ -110,33 +110,29 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{p['verified_ok']}✅ {p['verified_fail']}❌ / {p['submitted']} total"
         )
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "\n".join(lines), parse_mode="Markdown", reply_markup=back_keyboard()
     )
 
 
 async def cb_menu_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     await cmd_task(update, context)
 
 
 async def cb_menu_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     await cmd_progress(update, context)
 
 
 async def cb_menu_verif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     from bot.handlers.verif import cmd_verif
-    update.message = update.callback_query.message
     await cmd_verif(update, context)
 
 
 async def cb_menu_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     await cmd_history(update, context)
 
 
@@ -150,4 +146,5 @@ def get_handlers():
         CallbackQueryHandler(cb_menu_verif,    pattern="^menu:verif$"),
         CallbackQueryHandler(cb_menu_history,  pattern="^menu:history$"),
     ]
+
 

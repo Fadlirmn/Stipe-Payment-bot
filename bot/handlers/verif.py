@@ -21,20 +21,21 @@ from bot.config import TZ
 async def cmd_verif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tasks = await fdb.list_tasks(status="active")
     if not tasks:
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "📭 *Belum ada task aktif.*\nAdmin perlu membuat task terlebih dahulu.",
             parse_mode="Markdown",
             reply_markup=back_keyboard(),
         )
         return
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "🔗 *VERIFIKASI URL HARI INI*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "Pilih task untuk memulai verifikasi:",
         parse_mode="Markdown",
         reply_markup=task_list_keyboard(tasks),
     )
+
 
 
 async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):

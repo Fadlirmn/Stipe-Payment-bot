@@ -102,7 +102,7 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   @{u.get('username') or '-'} • {role_badge(u.get('role',''))}"
             + (" • ⛔" if not u.get("is_active", True) else "")
         )
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "\n".join(lines), parse_mode="Markdown", reply_markup=back_keyboard()
     )
 
@@ -152,7 +152,8 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = user.get("full_name", str(uid)) if user else str(uid)
         text += f"  {i}. {name}: {stat['ok']}✅ {stat['fail']}❌ ({stat['submitted']} total)\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+
 
 
 @require_role("dev")
@@ -183,7 +184,7 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Config Task Wizard ────────────────────────────────────
 @require_role("admin", "dev")
 async def cmd_config_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "⚙️ *CONFIG TASK BARU*\n━━━━━━━━━━━━━━━━━━━━\n"
         "Langkah 1/7: Masukkan *judul task*:",
         parse_mode="Markdown",
@@ -301,19 +302,16 @@ async def ct_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Callbacks
 async def cb_menu_config_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     return await cmd_config_task(update, context)
 
 
 async def cb_menu_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     await cmd_report(update, context)
 
 
 async def cb_menu_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    update.message = update.callback_query.message
     await cmd_users(update, context)
 
 
