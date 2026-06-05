@@ -15,7 +15,7 @@ import bot.firebase_db as fdb
 from bot.middlewares.auth import get_or_create_user, require_role
 from bot.utils.keyboards import back_keyboard
 from bot.utils.formatters import role_badge, progress_bar, now_wib
-from bot.config import TZ, DEV_IDS
+from bot.config import TZ, DEV_IDS, DASHBOARD_URL
 
 (CT_TITLE, CT_DESC, CT_TAB, CT_QUOTA_TOTAL, CT_QUOTA_STAFF, CT_DEADLINE, CT_REPEAT) = range(7)
 
@@ -317,6 +317,50 @@ async def cb_menu_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_users(update, context)
 
 
+async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    text = (
+        "🔧 *DEV TOOLS*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Gunakan perintah berikut secara langsung di chat:\n\n"
+        "• `/users` — Daftar & kelola semua user\n"
+        "• `/approve <user_id>` — Approve pendaftaran manual\n"
+        "• `/setrole <user_id> <role>` — Ubah role user\n"
+        "• `/broadcast <pesan>` — Kirim pesan broadcast ke semua staff\n"
+    )
+    await update.callback_query.message.reply_text(
+        text, parse_mode="Markdown", reply_markup=back_keyboard()
+    )
+
+
+async def cb_menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    text = (
+        "🌐 *DASHBOARD MONITORING*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Akses dashboard real-time melalui link berikut:\n\n"
+        f"🔗 [Buka Dashboard Web]({DASHBOARD_URL})\n\n"
+        "_Pastikan Anda login menggunakan akun Telegram yang terdaftar._"
+    )
+    await update.callback_query.message.reply_text(
+        text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=back_keyboard()
+    )
+
+
+async def cb_menu_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    text = (
+        "🔔 *SET REMINDER*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Fitur pengingat otomatis berjalan setiap hari pukul *22:00 WIB* "
+        "untuk mengirim ringkasan laporan harian kepada Admin dan Dev.\n\n"
+        "_Pengaturan pengingat kustom lewat bot akan segera hadir._"
+    )
+    await update.callback_query.message.reply_text(
+        text, parse_mode="Markdown", reply_markup=back_keyboard()
+    )
+
+
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -344,4 +388,8 @@ def get_handlers():
         CommandHandler("broadcast", cmd_broadcast),
         CallbackQueryHandler(cb_menu_report, pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,  pattern="^menu:users$"),
+        CallbackQueryHandler(cb_menu_devtools,  pattern="^menu:devtools$"),
+        CallbackQueryHandler(cb_menu_dashboard, pattern="^menu:dashboard$"),
+        CallbackQueryHandler(cb_menu_reminder,  pattern="^menu:reminder$"),
     ]
+

@@ -13,13 +13,32 @@ from bot.handlers import start, task, verif, admin
 
 
 
+from telegram import BotCommand
+
 async def post_init(application: Application) -> None:
     await init_db()
     logger.info("✅ Firebase Firestore connected")
     
+    # Set bot commands list in Telegram UI
+    commands = [
+        BotCommand("start", "Registrasi & masuk bot"),
+        BotCommand("menu", "Buka menu utama"),
+        BotCommand("help", "Panduan lengkap"),
+        BotCommand("me", "Info profil saya"),
+        BotCommand("verif", "Mulai verifikasi URL"),
+        BotCommand("progress", "Progress verifikasi saya"),
+        BotCommand("history", "Riwayat verifikasi"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        logger.info("✅ Bot commands registered in Telegram")
+    except Exception as e:
+        logger.warning(f"⚠️ Gagal mendaftarkan commands ke Telegram: {e}")
+    
     scheduler = setup_scheduler(application)
     scheduler.start()
     logger.info("✅ Scheduler started")
+
 
 
 def main():

@@ -35,8 +35,11 @@ STRIPE_ALLOWED_DOMAINS = [
 ]
 HTTP_TIMEOUT: float = 10.0
 
-# ── Spreadsheet column names ──────────────────────────────
 SHEET_DATE_COLUMN = "Date"
 SHEET_URL_COLUMN  = "Payment URL"
 SHEET_ACC_COLUMN  = "Account"
 SHEET_NOTE_COLUMN = "Notes"
+
+# ── Dashboard URL ─────────────────────────────────────────
+DASHBOARD_URL: str = os.getenv("DASHBOARD_URL", "https://stripe-verif-dashboard.vercel.app")
+

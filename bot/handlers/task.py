@@ -134,6 +134,12 @@ async def cb_menu_verif(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_verif(update, context)
 
 
+async def cb_menu_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    update.message = update.callback_query.message
+    await cmd_history(update, context)
+
+
 def get_handlers():
     return [
         CommandHandler("task",     cmd_task),
@@ -142,5 +148,6 @@ def get_handlers():
         CallbackQueryHandler(cb_menu_task,     pattern="^menu:task$"),
         CallbackQueryHandler(cb_menu_progress, pattern="^menu:progress$"),
         CallbackQueryHandler(cb_menu_verif,    pattern="^menu:verif$"),
-        CallbackQueryHandler(cmd_history,      pattern="^menu:history$"),
+        CallbackQueryHandler(cb_menu_history,  pattern="^menu:history$"),
     ]
+
