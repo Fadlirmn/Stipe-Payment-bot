@@ -49,24 +49,55 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
         return
 
+    # Check quota per staff harian
+    quota_staff = task.get("quota_per_staff", 0)
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            await update.callback_query.message.reply_text(
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
+                f"Terima kasih atas kerja kerasnya! 🙌",
+                parse_mode="Markdown",
+                reply_markup=back_keyboard()
+            )
+            return
+
     existing_count = await fdb.count_sheet_urls(task_id, today)
     if existing_count == 0:
         await update.callback_query.message.reply_text(
             f"⏳ Mengambil URL dari spreadsheet untuk tanggal *{today}*...",
             parse_mode="Markdown",
         )
-        await _sync_sheet_to_firebase(task, today)
+        count, err = await _sync_sheet_to_firebase(task, today)
+        if err:
+            await update.callback_query.message.reply_text(
+                f"❌ *Gagal mengambil URL dari Sheet:*\n`{err}`\n\n"
+                f"Pastikan URL Google Apps Script (`APPS_SCRIPT_URL`) di .env sudah benar dan dideploy.",
+                parse_mode="Markdown"
+            )
+            return
+        if count == 0:
+            await update.callback_query.message.reply_text(
+                f"⚠️ *Tidak ditemukan URL aktif untuk tanggal {today}* di Sheet Anda.\n"
+                f"Pastikan kolom Timestamp/Date berisi tanggal hari ini.",
+                parse_mode="Markdown",
+                reply_markup=back_keyboard()
+            )
+            return
 
     await _show_next_pending_url(update, context, task_id, user["user_id"], today)
 
 
-async def _sync_sheet_to_firebase(task: dict, target_date: str) -> int:
+async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, str | None]:
     from datetime import date
     tab = task.get("sheet_tab", "Sheet1")
     try:
         rows = fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
     except Exception as exc:
-        return 0
+        logger.error(f"[Sync] Error fetching URLs for task {task['task_id']}: {exc}")
+        return 0, str(exc)
 
     count = 0
     for row in rows:
@@ -78,7 +109,7 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> int:
             notes=row["notes"],
         )
         count += 1
-    return count
+    return count, None
 
 
 async def _show_next_pending_url(
@@ -88,6 +119,23 @@ async def _show_next_pending_url(
     user_id: int,
     today: str,
 ):
+    task = await fdb.get_task(task_id)
+    # Check quota per staff harian sebelum mengambil URL baru
+    quota_staff = task.get("quota_per_staff", 0) if task else 0
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user_id, today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            text = (
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
+                f"Terima kasih atas kerja kerasnya! 🙌"
+            )
+            msg = update.callback_query.message if update.callback_query else update.message
+            await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+            return
+
     url_obj = await fdb.get_next_pending_url(task_id, today)
 
     if not url_obj:
@@ -109,6 +157,7 @@ async def _show_next_pending_url(
     total = await fdb.count_sheet_urls(task_id, today)
     done  = await fdb.count_sheet_urls(task_id, today, status="OK")
     bar   = progress_bar(done, total)
+
 
     text = (
         f"🔗 *VERIFIKASI URL*\n"
@@ -204,21 +253,35 @@ async def cb_menu_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.callback_query.answer()
     user = await get_or_create_user(update)
     if user.get("role") not in ("admin", "dev"):
-        await update.callback_query.message.reply_text("🚫 Akses ditolak.")
+        await update.effective_message.reply_text("🚫 Akses ditolak.")
         return
 
     today = datetime.now(TZ).date().isoformat()
     tasks = await fdb.list_tasks(status="active")
+    if not tasks:
+        await update.effective_message.reply_text(
+            "📭 Tidak ada task aktif untuk disinkronisasi.",
+            reply_markup=back_keyboard()
+        )
+        return
+
+    report_lines = [f"🔄 *SYNC SPREADSHEET — {today}*\n━━━━━━━━━━━━━━━━━━━━"]
     total_synced = 0
     for task in tasks:
-        n = await _sync_sheet_to_firebase(task, today)
-        total_synced += n
+        count, err = await _sync_sheet_to_firebase(task, today)
+        if err:
+            report_lines.append(f"📌 `{task['task_id']}`: ❌ Error: `{err}`")
+        else:
+            report_lines.append(f"📌 `{task['task_id']}` ({task['title'][:15]}...): ✅ Sync {count} URL")
+            total_synced += count
 
-    await update.callback_query.message.reply_text(
-        f"✅ *Sync selesai!*\n{total_synced} URL baru ditambahkan dari spreadsheet.",
+    report_lines.append(f"\nTotal URL baru disinkronisasi: *{total_synced}*")
+    await update.effective_message.reply_text(
+        "\n".join(report_lines),
         parse_mode="Markdown",
         reply_markup=back_keyboard(),
     )
+
 
 
 def get_handlers():
