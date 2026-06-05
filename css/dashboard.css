@@ -296,6 +296,7 @@ body {
 .badge-active  { background: rgba(99,102,241,.2); color: var(--accent); }
 .badge-dev     { background: rgba(168,85,247,.2); color: var(--purple); }
 .badge-staff   { background: rgba(56,189,248,.2); color: var(--info); }
+.badge-admin   { background: rgba(245,158,11,.2); color: var(--warning); }
 
 /* ── Filters ─────────────────────────────── */
 .filter-row { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; }
@@ -476,7 +477,7 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 20px;
-  padding: 48px 40px;
+  padding: 40px 36px;
   max-width: 420px;
   width: 100%;
   text-align: center;
@@ -510,16 +511,88 @@ body {
 .login-desc {
   color: var(--text-secondary);
   font-size: .85rem;
-  margin-bottom: 28px;
+  margin-bottom: 20px;
   line-height: 1.6;
 }
 .login-desc strong { color: var(--text-primary); }
 
-#telegram-login-btn {
+.auth-form {
   display: flex;
-  justify-content: center;
-  min-height: 44px;
-  transition: opacity .2s;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: .75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.form-group input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: .9rem;
+  font-family: inherit;
+  transition: all .2s ease;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.25);
+}
+
+.btn-auth {
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  padding: 11px;
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s ease;
+  text-align: center;
+  margin-top: 6px;
+}
+
+.btn-auth:hover {
+  background: #4f46e5;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+}
+
+.btn-auth:active {
+  transform: scale(.98);
+}
+
+.auth-toggle-text {
+  font-size: .8rem;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-top: 8px;
+}
+
+.auth-toggle-text a {
+  color: var(--info);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.auth-toggle-text a:hover {
+  text-decoration: underline;
 }
 
 .login-error {

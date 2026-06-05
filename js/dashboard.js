@@ -2,126 +2,192 @@
 'use strict';
 
 // ══════════════════════════════════════════════════════════
-// AUTH — Telegram Login
+// AUTH — Firebase Auth
 // ══════════════════════════════════════════════════════════
-let currentUser   = null; // { id, first_name, username, role, ... }
+let currentUser   = null; // { id, first_name, username, role, email, ... }
 let currentSection = 'overview';
 let ringChart, lineChart;
 let currentUrlFilter = '';
 
-const SESSION_KEY = 'svb_auth';
+function initAuth() {
+  firebase.auth().onAuthStateChanged(async (user) => {
+    if (user) {
+      showLoginLoading(true);
+      showLoginError('');
+      try {
+        const email = user.email.toLowerCase();
+        const userSnap = await db.collection('users').where('email', '==', email).get();
+        
+        if (userSnap.empty) {
+          showLoginError('🚫 Email Anda belum terdaftar di database bot. Hubungkan email di bot Telegram menggunakan /setemail.');
+          firebase.auth().signOut();
+          showLoginLoading(false);
+          showLoginScreen();
+          return;
+        }
 
-async function initAuth() {
-  // Cek session yang tersimpan
-  const saved = sessionStorage.getItem(SESSION_KEY);
-  if (saved) {
-    try {
-      currentUser = JSON.parse(saved);
-      await showDashboard();
-      return;
-    } catch (_) {
-      sessionStorage.removeItem(SESSION_KEY);
+        const userData = userSnap.docs[0].data();
+
+        if (!userData.is_active) {
+          showLoginError('🚫 Akun Anda dinonaktifkan. Hubungi admin.');
+          firebase.auth().signOut();
+          showLoginLoading(false);
+          showLoginScreen();
+          return;
+        }
+
+        if (!['dev', 'staff'].includes(userData.role)) {
+          showLoginError('🚫 Akses ditolak. Akun Anda masih pending atau belum diapprove.');
+          firebase.auth().signOut();
+          showLoginLoading(false);
+          showLoginScreen();
+          return;
+        }
+
+        currentUser = {
+          id:         userData.user_id,
+          first_name: userData.full_name || 'User',
+          last_name:  '',
+          username:   userData.username || '',
+          role:       userData.role,
+          email:      email
+        };
+
+        showLoginLoading(false);
+        await showDashboard();
+
+      } catch (err) {
+        console.error('Auth check error:', err);
+        showLoginError('❌ Gagal memeriksa data user: ' + err.message);
+        firebase.auth().signOut();
+        showLoginLoading(false);
+        showLoginScreen();
+      }
+    } else {
+      currentUser = null;
+      showLoginScreen();
     }
-  }
-  showLoginScreen();
+  });
 }
 
 function showLoginScreen() {
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
-  injectTelegramWidget();
 }
 
-function injectTelegramWidget() {
-  const container = document.getElementById('telegram-login-btn');
-  container.innerHTML = '';
-  const script = document.createElement('script');
-  script.src = 'https://telegram.org/js/telegram-widget.js?22';
-  script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
-  script.setAttribute('data-size', 'large');
-  script.setAttribute('data-radius', '8');
-  script.setAttribute('data-onauth', 'onTelegramAuth(user)');
-  script.setAttribute('data-request-access', 'write');
-  script.async = true;
-  container.appendChild(script);
+function toggleAuthMode(event, mode) {
+  if (event) event.preventDefault();
+  showLoginError('');
+  if (mode === 'signup') {
+    document.getElementById('signin-form').style.display = 'none';
+    document.getElementById('signup-form').style.display = 'flex';
+  } else {
+    document.getElementById('signin-form').style.display = 'flex';
+    document.getElementById('signup-form').style.display = 'none';
+  }
 }
 
-// Callback dari Telegram Widget
-window.onTelegramAuth = async function(tgUser) {
+async function handleSignIn(event) {
+  event.preventDefault();
+  const email = document.getElementById('signin-email').value.trim();
+  const password = document.getElementById('signin-password').value;
+
   showLoginError('');
   showLoginLoading(true);
 
   try {
-    // 1. Verifikasi hash di server (BOT_TOKEN aman di server)
-    const verifyRes = await fetch('/api/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tgUser),
-    });
-    const verifyData = await verifyRes.json();
-
-    if (!verifyData.ok) {
-      showLoginError('❌ Autentikasi gagal: ' + verifyData.error);
-      showLoginLoading(false);
-      return;
-    }
-
-    // 2. Cek apakah user terdaftar di Firestore dan rolenya
-    const userDoc = await db.collection('users').doc(String(tgUser.id)).get();
-
-    if (!userDoc.exists) {
-      showLoginError('🚫 Akun Telegram kamu belum terdaftar di bot. Kirim /start ke bot terlebih dahulu.');
-      showLoginLoading(false);
-      return;
-    }
-
-    const userData = userDoc.data();
-
-    if (!userData.is_active) {
-      showLoginError('🚫 Akun kamu dinonaktifkan. Hubungi admin.');
-      showLoginLoading(false);
-      return;
-    }
-
-    if (!['dev', 'staff'].includes(userData.role)) {
-      showLoginError('🚫 Akses ditolak. Akun kamu masih pending atau belum diapprove.');
-      showLoginLoading(false);
-      return;
-    }
-
-    // 3. Simpan session
-    currentUser = {
-      id:         tgUser.id,
-      first_name: tgUser.first_name,
-      last_name:  tgUser.last_name || '',
-      username:   tgUser.username || '',
-      role:       userData.role,
-    };
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-    showLoginLoading(false);
-    await showDashboard();
-
+    await firebase.auth().signInWithEmailAndPassword(email, password);
   } catch (err) {
-    console.error('Auth error:', err);
-    showLoginError('❌ Terjadi kesalahan. Coba lagi.');
+    console.error('Sign in error:', err);
+    let friendlyMsg = '❌ Terjadi kesalahan login.';
+    if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      friendlyMsg = '❌ Email atau password salah.';
+    } else if (err.code === 'auth/invalid-email') {
+      friendlyMsg = '❌ Format email tidak valid.';
+    } else {
+      friendlyMsg = `❌ Error: ${err.message}`;
+    }
+    showLoginError(friendlyMsg);
     showLoginLoading(false);
   }
-};
+}
+
+async function handleSignUp(event) {
+  event.preventDefault();
+  const email = document.getElementById('signup-email').value.trim();
+  const password = document.getElementById('signup-password').value;
+  const confirmPassword = document.getElementById('signup-confirm-password').value;
+
+  showLoginError('');
+
+  if (password.length < 6) {
+    showLoginError('❌ Password minimal harus 6 karakter.');
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    showLoginError('❌ Password dan Konfirmasi Password tidak cocok.');
+    return;
+  }
+
+  showLoginLoading(true);
+
+  try {
+    const emailLower = email.toLowerCase();
+    const userSnap = await db.collection('users').where('email', '==', emailLower).get();
+
+    if (userSnap.empty) {
+      showLoginError('🚫 Email Anda belum terdaftar di database bot. Silakan gunakan perintah /setemail <email> pada bot Telegram Anda terlebih dahulu.');
+      showLoginLoading(false);
+      return;
+    }
+
+    const userCred = await firebase.auth().createUserWithEmailAndPassword(email, password);
+    const docId = userSnap.docs[0].id;
+    await db.collection('users').doc(docId).update({
+      firebase_uid: userCred.user.uid
+    });
+
+    document.getElementById('signup-form').reset();
+    toggleAuthMode(null, 'signin');
+    showLoginError('✅ Pendaftaran berhasil! Silakan masuk.');
+    showLoginLoading(false);
+
+  } catch (err) {
+    console.error('Sign up error:', err);
+    let friendlyMsg = '❌ Gagal mendaftar.';
+    if (err.code === 'auth/email-already-in-use') {
+      friendlyMsg = '❌ Email sudah digunakan oleh akun lain.';
+    } else if (err.code === 'auth/invalid-email') {
+      friendlyMsg = '❌ Format email tidak valid.';
+    } else {
+      friendlyMsg = `❌ Error: ${err.message}`;
+    }
+    showLoginError(friendlyMsg);
+    showLoginLoading(false);
+  }
+}
 
 async function showDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'contents';
 
-  // Tampilkan info user di sidebar
-  const name = currentUser.first_name + (currentUser.last_name ? ' ' + currentUser.last_name : '');
+  const name = esc(currentUser.first_name);
   document.getElementById('sidebar-user').innerHTML =
-    `<strong>${esc(name)}</strong><br><small style="color:var(--text-secondary)">` +
+    `<strong>${name}</strong><br><small style="color:var(--text-secondary)">` +
     `${currentUser.username ? '@' + esc(currentUser.username) + ' · ' : ''}` +
-    `<span class="badge badge-${currentUser.role === 'dev' ? 'dev' : 'staff'}">${currentUser.role}</span></small>`;
+    `<span class="badge badge-${currentUser.role}">${currentUser.role}</span></small>`;
 
-  // Tampilkan menu User Management hanya untuk dev
   if (currentUser.role === 'dev') {
     document.querySelectorAll('.nav-dev-only').forEach(el => el.style.display = 'flex');
+  } else {
+    document.querySelectorAll('.nav-dev-only').forEach(el => el.style.display = 'none');
+  }
+
+  if (['dev', 'admin'].includes(currentUser.role)) {
+    document.querySelectorAll('.nav-admin-only').forEach(el => el.style.display = 'flex');
+  } else {
+    document.querySelectorAll('.nav-admin-only').forEach(el => el.style.display = 'none');
   }
 
   initDashboard();
@@ -134,15 +200,22 @@ function showLoginError(msg) {
 }
 
 function showLoginLoading(on) {
-  const btn = document.getElementById('telegram-login-btn');
-  btn.style.opacity = on ? '.5' : '1';
-  btn.style.pointerEvents = on ? 'none' : '';
+  const forms = ['signin-form', 'signup-form'];
+  forms.forEach(fId => {
+    const form = document.getElementById(fId);
+    if (form) {
+      const els = form.querySelectorAll('input, button');
+      els.forEach(el => el.disabled = on);
+    }
+  });
 }
 
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  sessionStorage.removeItem(SESSION_KEY);
-  currentUser = null;
-  showLoginScreen();
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  try {
+    await firebase.auth().signOut();
+  } catch (err) {
+    console.error('Logout error:', err);
+  }
 });
 
 // ══════════════════════════════════════════════════════════
@@ -207,7 +280,24 @@ function setStatus(ok) {
 }
 
 function loadSection(sec) {
+  if (currentUser.role === 'staff' && ['staff', 'analytics', 'usermgmt'].includes(sec)) {
+    sec = 'overview';
+  }
+  if (currentUser.role === 'admin' && ['usermgmt'].includes(sec)) {
+    sec = 'overview';
+  }
+
   currentSection = sec;
+
+  document.querySelectorAll('.nav-item').forEach(x => {
+    if (x.dataset.section === sec) {
+      x.classList.add('active');
+      document.getElementById('pageTitle').textContent = x.textContent.trim();
+    } else {
+      x.classList.remove('active');
+    }
+  });
+
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById(`section-${sec}`).classList.add('active');
   const d = document.getElementById('datePicker').value;
@@ -245,24 +335,63 @@ async function getDocs(collectionPath, conditions = [], orderByField = null,
 // ══════════════════════════════════════════════════════════
 async function loadOverview(d) {
   try {
-    const [total, ok, pending] = await Promise.all([
-      countDocs('sheet_urls', [['date', '==', d]]),
-      countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'OK']]),
-      countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'PENDING']]),
-    ]);
-    const fail  = total - ok - pending;
-    const pct   = total > 0 ? Math.round(ok / total * 100 * 10) / 10 : 0;
-    const tasks  = await countDocs('tasks', [['status', '==', 'active']]);
-    const staff  = await countDocs('users', [['role', '==', 'staff']]);
+    if (currentUser.role === 'staff') {
+      const progs = await getDocs('task_progress', [['user_id', '==', parseInt(currentUser.id)], ['date', '==', d]]);
+      let totalSubmitted = 0, totalOk = 0, totalFail = 0;
+      for (const p of progs) {
+        totalSubmitted += p.submitted || 0;
+        totalOk += p.verified_ok || 0;
+        totalFail += p.verified_fail || 0;
+      }
+      
+      const pct = totalSubmitted > 0 ? Math.round(totalOk / totalSubmitted * 100 * 10) / 10 : 0;
+      const tasks = await countDocs('tasks', [['status', '==', 'active']]);
 
-    document.getElementById('val-total').textContent   = total;
-    document.getElementById('val-ok').textContent      = ok;
-    document.getElementById('val-fail').textContent    = fail;
-    document.getElementById('val-pending').textContent = pending;
-    document.getElementById('val-tasks').textContent   = tasks;
-    document.getElementById('val-staff').textContent   = staff;
-    document.getElementById('ring-pct').textContent    = pct;
-    renderRing(pct);
+      document.querySelector('.stat-card:nth-child(1) .stat-label').textContent = 'My Total Submitted';
+      document.getElementById('val-total').textContent = totalSubmitted;
+
+      document.querySelector('.stat-card:nth-child(2) .stat-label').textContent = 'My Verified OK';
+      document.getElementById('val-ok').textContent = totalOk;
+
+      document.querySelector('.stat-card:nth-child(3) .stat-label').textContent = 'My Failed';
+      document.getElementById('val-fail').textContent = totalFail;
+
+      document.getElementById('card-pending-wrap').style.display = 'none';
+      document.getElementById('card-staff-wrap').style.display = 'none';
+
+      document.getElementById('val-tasks').textContent = tasks;
+      document.getElementById('ring-pct').textContent = pct;
+      renderRing(pct);
+      
+      document.querySelector('.overview-progress-card .card-header').textContent = '📊 Completion Rate Saya Hari Ini';
+
+    } else {
+      document.querySelector('.stat-card:nth-child(1) .stat-label').textContent = 'Total URL';
+      document.querySelector('.stat-card:nth-child(2) .stat-label').textContent = 'Verified OK';
+      document.querySelector('.stat-card:nth-child(3) .stat-label').textContent = 'Failed';
+      document.getElementById('card-pending-wrap').style.display = 'flex';
+      document.getElementById('card-staff-wrap').style.display = 'flex';
+      document.querySelector('.overview-progress-card .card-header').textContent = '📊 Completion Rate Hari Ini';
+
+      const [total, ok, pending] = await Promise.all([
+        countDocs('sheet_urls', [['date', '==', d]]),
+        countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'OK']]),
+        countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'PENDING']]),
+      ]);
+      const fail  = total - ok - pending;
+      const pct   = total > 0 ? Math.round(ok / total * 100 * 10) / 10 : 0;
+      const tasks  = await countDocs('tasks', [['status', '==', 'active']]);
+      const staff  = await countDocs('users', [['role', '==', 'staff']]);
+
+      document.getElementById('val-total').textContent   = total;
+      document.getElementById('val-ok').textContent      = ok;
+      document.getElementById('val-fail').textContent    = fail;
+      document.getElementById('val-pending').textContent = pending;
+      document.getElementById('val-tasks').textContent   = tasks;
+      document.getElementById('val-staff').textContent   = staff;
+      document.getElementById('ring-pct').textContent    = pct;
+      renderRing(pct);
+    }
     setStatus(true);
   } catch (e) {
     console.error('Overview error:', e);
@@ -383,6 +512,15 @@ async function loadStaff(d) {
 // ══════════════════════════════════════════════════════════
 async function initTaskUserSection() {
   const select = document.getElementById('user-select');
+  const selectorWrap = document.querySelector('.user-selector-wrap');
+
+  if (currentUser.role === 'staff') {
+    selectorWrap.style.display = 'none';
+    loadTaskUser(currentUser.id);
+    return;
+  }
+
+  selectorWrap.style.display = 'flex';
   if (select.options.length > 1) return; // sudah diisi
 
   const staffList = await getDocs('users', [['role','==','staff']]);
@@ -395,6 +533,9 @@ async function initTaskUserSection() {
 }
 
 async function loadTaskUser(userId) {
+  if (currentUser.role === 'staff' && String(userId) !== String(currentUser.id)) {
+    userId = currentUser.id;
+  }
   const d = document.getElementById('datePicker').value;
   const tbody = document.getElementById('taskuser-tbody');
   const summary = document.getElementById('task-user-summary');
@@ -467,7 +608,11 @@ let urlAllDocs = [];
 async function loadUrlLog(d) {
   const conditions = [['date','==',d]];
   if (currentUrlFilter) conditions.push(['status','==',currentUrlFilter]);
-  urlAllDocs = await getDocs('sheet_urls', conditions, 'created_at', 'desc', 500);
+  let docs = await getDocs('sheet_urls', conditions, 'created_at', 'desc', 500);
+  if (currentUser.role === 'staff') {
+    docs = docs.filter(r => String(r.verified_by) === String(currentUser.id));
+  }
+  urlAllDocs = docs;
   renderUrlPage(1);
 }
 
@@ -594,11 +739,11 @@ async function loadUserMgmt(roleFilter) {
             <div class="avatar">${initial}</div>
             <div class="user-info-text">
               <span class="user-info-name">${esc(u.full_name||'N/A')}</span>
-              <span class="user-info-sub">ID: ${u.user_id}</span>
+              <span class="user-info-sub">@${esc(u.username||'N/A')}</span>
             </div>
           </div>
         </td>
-        <td>${u.username ? '@'+esc(u.username) : '-'}</td>
+        <td>${u.email ? esc(u.email) : '<span style="color:var(--text-secondary);font-style:italic">Belum diatur</span>'}</td>
         <td><code>${u.user_id}</code></td>
         <td>${roleBadge}</td>
         <td>${activeBadge}</td>

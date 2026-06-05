@@ -11,6 +11,7 @@
   <!-- Firebase JS SDK v10 -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <link rel="stylesheet" href="/css/dashboard.css" />
 </head>
 <body>
@@ -23,8 +24,45 @@
       <div class="login-logo">⚡</div>
       <h1 class="login-title">Stripe Verif Bot</h1>
       <p class="login-subtitle">Dashboard Monitoring</p>
-      <p class="login-desc">Login dengan akun Telegram yang terdaftar sebagai <strong>Dev</strong> atau <strong>Staff</strong>.</p>
-      <div id="telegram-login-btn"></div>
+      
+      <!-- Form Sign In -->
+      <form id="signin-form" class="auth-form" onsubmit="handleSignIn(event)">
+        <p class="login-desc">Masukkan email & password akun Anda.</p>
+        <div class="form-group">
+          <label for="signin-email">Email</label>
+          <input type="email" id="signin-email" placeholder="nama@email.com" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="signin-password">Password</label>
+          <input type="password" id="signin-password" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <button type="submit" id="signin-btn" class="btn-auth">Masuk</button>
+        <p class="auth-toggle-text">
+          Belum punya akun? <a href="#" onclick="toggleAuthMode(event, 'signup')">Daftar di sini</a>
+        </p>
+      </form>
+
+      <!-- Form Sign Up -->
+      <form id="signup-form" class="auth-form" onsubmit="handleSignUp(event)" style="display: none;">
+        <p class="login-desc">Daftarkan email yang sudah dihubungkan via bot Telegram.</p>
+        <div class="form-group">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" placeholder="nama@email.com" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="signup-password">Password</label>
+          <input type="password" id="signup-password" placeholder="Minimal 6 karakter" required autocomplete="new-password" />
+        </div>
+        <div class="form-group">
+          <label for="signup-confirm-password">Konfirmasi Password</label>
+          <input type="password" id="signup-confirm-password" placeholder="Ulangi password" required autocomplete="new-password" />
+        </div>
+        <button type="submit" id="signup-btn" class="btn-auth">Daftar</button>
+        <p class="auth-toggle-text">
+          Sudah punya akun? <a href="#" onclick="toggleAuthMode(event, 'signin')">Masuk di sini</a>
+        </p>
+      </form>
+
       <p id="login-error" class="login-error" style="display:none"></p>
     </div>
   </div>
@@ -47,7 +85,7 @@
         <a href="#" class="nav-item" data-section="tasks">
           <span class="nav-icon">📋</span> Task Manager
         </a>
-        <a href="#" class="nav-item" data-section="staff">
+        <a href="#" class="nav-item nav-admin-only" data-section="staff" style="display:none">
           <span class="nav-icon">👥</span> Staff Monitor
         </a>
         <a href="#" class="nav-item" data-section="taskuser">
@@ -56,7 +94,7 @@
         <a href="#" class="nav-item" data-section="urllog">
           <span class="nav-icon">🔗</span> URL Log
         </a>
-        <a href="#" class="nav-item" data-section="analytics">
+        <a href="#" class="nav-item nav-admin-only" data-section="analytics" style="display:none">
           <span class="nav-icon">📈</span> Analytics
         </a>
         <!-- Hanya tampil untuk role dev -->
@@ -96,11 +134,11 @@
             <div class="stat-body"><div class="stat-value" id="val-ok">—</div><div class="stat-label">Verified OK</div></div></div>
           <div class="stat-card danger"><div class="stat-icon">❌</div>
             <div class="stat-body"><div class="stat-value" id="val-fail">—</div><div class="stat-label">Failed</div></div></div>
-          <div class="stat-card warning"><div class="stat-icon">⏳</div>
+          <div class="stat-card warning" id="card-pending-wrap"><div class="stat-icon">⏳</div>
             <div class="stat-body"><div class="stat-value" id="val-pending">—</div><div class="stat-label">Pending</div></div></div>
           <div class="stat-card info"><div class="stat-icon">📋</div>
             <div class="stat-body"><div class="stat-value" id="val-tasks">—</div><div class="stat-label">Active Tasks</div></div></div>
-          <div class="stat-card purple"><div class="stat-icon">👥</div>
+          <div class="stat-card purple" id="card-staff-wrap"><div class="stat-icon">👥</div>
             <div class="stat-body"><div class="stat-value" id="val-staff">—</div><div class="stat-label">Total Staff</div></div></div>
         </div>
         <div class="card overview-progress-card">
@@ -222,7 +260,7 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>User</th><th>Username</th><th>Telegram ID</th>
+                  <th>User</th><th>Email</th><th>Telegram ID</th>
                   <th>Role</th><th>Status</th><th>Joined</th><th>Approved By</th>
                 </tr>
               </thead>
