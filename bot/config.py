@@ -1,0 +1,42 @@
+"""
+config.py — Central configuration loader
+"""
+import os
+from dotenv import load_dotenv
+from zoneinfo import ZoneInfo
+
+load_dotenv()
+
+# ── Telegram ──────────────────────────────────────────────
+BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+DEV_IDS: list[int] = [
+    int(x.strip()) for x in os.getenv("DEV_IDS", "").split(",") if x.strip()
+]
+
+# ── Google Apps Script (pengganti Google Sheets API) ────────
+APPS_SCRIPT_URL: str = os.getenv("APPS_SCRIPT_URL", "")
+
+# ── Firebase ──────────────────────────────────────────────
+FIREBASE_CREDENTIALS_JSON: str = os.getenv("FIREBASE_CREDENTIALS_JSON", "./firebase-credentials.json")
+FIREBASE_PROJECT_ID: str = os.getenv("FIREBASE_PROJECT_ID", "")
+
+# ── Timezone ──────────────────────────────────────────────
+TZ_NAME: str = os.getenv("TIMEZONE", "Asia/Jakarta")
+TZ = ZoneInfo(TZ_NAME)
+
+# ── URL Verifier ──────────────────────────────────────────
+STRIPE_ALLOWED_DOMAINS = [
+    "stripe.com",
+    "checkout.stripe.com",
+    "buy.stripe.com",
+    "billing.stripe.com",
+    "invoice.stripe.com",
+    "pay.stripe.com",
+]
+HTTP_TIMEOUT: float = 10.0
+
+# ── Spreadsheet column names ──────────────────────────────
+SHEET_DATE_COLUMN = "Date"
+SHEET_URL_COLUMN  = "Payment URL"
+SHEET_ACC_COLUMN  = "Account"
+SHEET_NOTE_COLUMN = "Notes"

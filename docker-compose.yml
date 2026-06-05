@@ -1,0 +1,20 @@
+version: '3.8'
+
+# Bot saja yang jalan di VPS via Docker
+# Dashboard → deploy ke Vercel (folder dashboard-vercel/)
+# Database  → Firebase Firestore (cloud)
+
+services:
+  bot:
+    build: .
+    command: python main.py
+    env_file: .env
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro          # Google Sheets SA
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro  # Firebase SA
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
