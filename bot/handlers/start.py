@@ -30,17 +30,29 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("✅ Setujui",  callback_data=f"approve_user:{tg.id}"),
             InlineKeyboardButton("❌ Tolak",    callback_data=f"reject_user:{tg.id}"),
         ]])
-        for dev_id in DEV_IDS:
+        notif_text = (
+            f"🔔 *Pendaftaran Baru*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Nama     : {tg.full_name}\n"
+            f"🔗 Username : @{tg.username or 'N/A'}\n\n"
+            f"Klik tombol di bawah untuk menyetujui atau menolak."
+        )
+
+        # Kumpulkan semua penerima: DEV_IDS + semua admin aktif di database
+        notify_ids = set(DEV_IDS)
+        try:
+            all_users = await fdb.list_users()
+            for u in all_users:
+                if u.get("role") == "admin" and u.get("is_active", True):
+                    notify_ids.add(u["user_id"])
+        except Exception:
+            pass
+
+        for notify_id in notify_ids:
             try:
                 await context.bot.send_message(
-                    chat_id=dev_id,
-                    text=(
-                        f"🔔 *Pendaftaran Baru*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"👤 Nama     : {tg.full_name}\n"
-                        f"🔗 Username : @{tg.username or 'N/A'}\n\n"
-                        f"Klik tombol di bawah untuk menyetujui atau menolak."
-                    ),
+                    chat_id=notify_id,
+                    text=notif_text,
                     parse_mode="Markdown",
                     reply_markup=approve_kb,
                 )
