@@ -261,10 +261,10 @@
               <thead>
                 <tr>
                   <th>User</th><th>Email</th><th>Telegram ID</th>
-                  <th>Role</th><th>Status</th><th>Joined</th><th>Approved By</th>
+                  <th>Role</th><th>Status</th><th>Joined</th><th>Approved By</th><th>Aksi</th>
                 </tr>
               </thead>
-              <tbody id="usermgmt-tbody"><tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr></tbody>
+              <tbody id="usermgmt-tbody"><tr><td colspan="8" class="loading-row">⏳ Memuat data...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -272,6 +272,38 @@
 
     </main>
   </div><!-- /#app -->
+
+  <!-- ── EDIT USER MODAL ── -->
+  <div id="edit-user-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:var(--surface,#1e293b);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 32px;width:100%;max-width:420px;box-shadow:0 24px 60px rgba(0,0,0,.5);">
+      <h2 style="margin:0 0 6px;font-size:1.1rem;color:#f1f5f9;">✏️ Edit User</h2>
+      <p id="edit-user-name" style="margin:0 0 20px;color:#94a3b8;font-size:.85rem;"></p>
+
+      <div style="margin-bottom:14px;">
+        <label style="display:block;margin-bottom:6px;font-size:.8rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Role</label>
+        <select id="edit-role" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#f1f5f9;font-size:.9rem;">
+          <option value="staff">Staff</option>
+          <option value="admin">Admin</option>
+          <option value="dev">Dev</option>
+          <option value="pending">Pending</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:22px;">
+        <label style="display:block;margin-bottom:6px;font-size:.8rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Status Akun</label>
+        <select id="edit-active" style="width:100%;padding:10px 12px;background:#0f172a;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#f1f5f9;font-size:.9rem;">
+          <option value="true">✅ Aktif</option>
+          <option value="false">⛔ Nonaktif (Ban)</option>
+        </select>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button onclick="closeEditModal()" style="padding:9px 18px;background:transparent;border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#94a3b8;cursor:pointer;font-size:.85rem;">Batal</button>
+        <button onclick="saveEditUser()" style="padding:9px 18px;background:#6366f1;border:none;border-radius:8px;color:#fff;cursor:pointer;font-size:.85rem;font-weight:600;">💾 Simpan</button>
+      </div>
+      <p id="edit-modal-msg" style="margin:10px 0 0;font-size:.8rem;text-align:center;"></p>
+    </div>
+  </div>
 
   <!-- Firebase config — di-inject saat build oleh build.js dari Vercel env vars -->
   <script>

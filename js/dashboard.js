@@ -749,16 +749,77 @@ async function loadUserMgmt(roleFilter) {
         <td>${activeBadge}</td>
         <td>${joined}</td>
         <td>${u.approved_by ? '<code>'+esc(String(u.approved_by))+'</code>' : '—'}</td>
+        <td>
+          <button
+            onclick="openEditModal('${u.user_id}', '${esc(u.full_name||u.username||'User')}', '${u.role}', ${!!u.is_active})"
+            style="padding:5px 10px;background:#6366f1;border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:.78rem;">
+            ✏️ Edit
+          </button>
+        </td>
       </tr>`;
     }).join('');
 
   } catch (err) {
     console.error('UserMgmt error:', err);
-    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⚠️ Gagal memuat data</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-row">⚠️ Gagal memuat data</td></tr>';
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
+// EDIT USER MODAL
+// ══════════════════════════════════════════════════════════
+let _editUserId = null;
+
+function openEditModal(userId, name, role, isActive) {
+  _editUserId = String(userId);
+  document.getElementById('edit-user-name').textContent = name + ' • ID: ' + userId;
+  document.getElementById('edit-role').value   = role;
+  document.getElementById('edit-active').value = String(isActive);
+  document.getElementById('edit-modal-msg').textContent = '';
+  document.getElementById('edit-user-modal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('edit-user-modal').style.display = 'none';
+  _editUserId = null;
+}
+
+async function saveEditUser() {
+  if (!_editUserId) return;
+  const newRole  = document.getElementById('edit-role').value;
+  const isActive = document.getElementById('edit-active').value === 'true';
+  const msgEl    = document.getElementById('edit-modal-msg');
+  msgEl.style.color = '#94a3b8';
+  msgEl.textContent = '⏳ Menyimpan...';
+
+  try {
+    const snap = await db.collection('users')
+      .where('user_id', '==', parseInt(_editUserId)).limit(1).get();
+    if (snap.empty) {
+      msgEl.style.color = '#ef4444';
+      msgEl.textContent = '❌ User tidak ditemukan.';
+      return;
+    }
+    await snap.docs[0].ref.update({ role: newRole, is_active: isActive });
+    msgEl.style.color = '#22c55e';
+    msgEl.textContent = '✅ Berhasil disimpan!';
+    setTimeout(() => {
+      closeEditModal();
+      const activeTab = document.querySelector('.role-tab.active');
+      loadUserMgmt(activeTab ? activeTab.dataset.role : '');
+    }, 800);
+  } catch (err) {
+    console.error('saveEditUser error:', err);
+    msgEl.style.color = '#ef4444';
+    msgEl.textContent = '❌ Gagal: ' + err.message;
+  }
+}
+
+document.getElementById('edit-user-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeEditModal();
+});
+
+// ── Helpers ─────────────────────────────────────────────────
 function esc(str) {
   return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
