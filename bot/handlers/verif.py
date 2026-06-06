@@ -28,6 +28,13 @@ async def cmd_verif(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Kalau task aktif cuma 1, langsung mulai verifikasi — skip picker
+    if len(tasks) == 1:
+        user  = await get_or_create_user(update)
+        today = datetime.now(TZ).date().isoformat()
+        await _show_next_pending_url(update, context, tasks[0]["task_id"], user["user_id"], today)
+        return
+
     await update.effective_message.reply_text(
         "🔗 *VERIFIKASI URL HARI INI*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
