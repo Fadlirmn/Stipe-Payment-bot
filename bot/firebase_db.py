@@ -200,15 +200,14 @@ async def get_next_pending_url(task_id: str, date: str) -> dict | None:
 
 async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> dict | None:
     """
-    Mengambil URL yang sedang diproses oleh staff ini, atau mengklaim URL PENDING berikutnya
-    menggunakan transaksi Firestore agar tidak terjadi klaim ganda oleh staff lain.
-    Juga mendeteksi dan mengklaim ulang URL berstatus PROCESSING yang sudah kedaluwarsa (> 5 menit).
+    Mengambil URL yang sedang diproses oleh staff ini, atau mengklaim URL PENDING berikutnya.
+    Menggunakan optimistic update (bukan Firestore transaction) karena SDK async_transactional
+    bermasalah dengan versi google-cloud-firestore saat ini.
     """
-    from google.cloud.firestore import async_transactional
     from datetime import datetime, timedelta
     from bot.config import TZ
+    import asyncio
 
-    db_client = db()  # gunakan singleton — bukan get_db() yang buat client baru tiap panggil
     user_id_str = str(user_id)
 
     # 1. Cek apakah staff ini sudah memiliki URL berstatus PROCESSING
@@ -226,8 +225,8 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
         d["id"] = user_processing_docs[0].id
         return d
 
-    # 2. Cari kandidat URL PENDING atau PROCESSING kedaluwarsa, lalu klaim dengan transaksi
-    for _ in range(3):  # Coba 3 kali jika ada konflik transaksi
+    # 2. Cari & klaim URL dengan optimistic update (retry max 3x)
+    for attempt in range(3):
         now = datetime.now(TZ)
 
         # Cari PENDING
@@ -240,69 +239,63 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
             .get()
         )
 
-        doc_id = None
+        doc_to_claim = None
         if pending_docs:
-            doc_id = pending_docs[0].id
+            doc_to_claim = pending_docs[0]
         else:
-            # Jika tidak ada yang PENDING, cari PROCESSING yang sudah ditinggal (> 5 menit)
-            five_minutes_ago = (now - timedelta(minutes=5)).isoformat()
+            # Cari PROCESSING yang sudah ditinggal > 5 menit
+            five_min_ago = (now - timedelta(minutes=5)).isoformat()
             abandoned_docs = await (
                 sheet_urls_col()
                 .where("task_id", "==", task_id)
                 .where("date", "==", date_str)
                 .where("status", "==", "PROCESSING")
-                .where("assigned_at", "<", five_minutes_ago)
+                .where("assigned_at", "<", five_min_ago)
                 .limit(1)
                 .get()
             )
             if abandoned_docs:
-                doc_id = abandoned_docs[0].id
+                doc_to_claim = abandoned_docs[0]
 
-        if not doc_id:
-            return None  # Habis
+        if not doc_to_claim:
+            return None  # Semua URL sudah habis
 
-        doc_ref = sheet_urls_col().document(doc_id)
+        data = doc_to_claim.to_dict()
+        curr_status = data.get("status")
+        curr_assigned_at = data.get("assigned_at")
 
-        @async_transactional
-        async def _claim_tx(transaction, doc_ref):
-            # transaction.get() di SDK baru mengembalikan async_generator — harus pakai async for
-            doc_snap = None
-            async for snap in transaction.get(doc_ref):
-                doc_snap = snap
-                break
+        is_pending   = (curr_status == "PENDING")
+        is_abandoned = (
+            curr_status == "PROCESSING" and
+            curr_assigned_at and
+            curr_assigned_at < (now - timedelta(minutes=5)).isoformat()
+        )
 
-            if doc_snap is None or not doc_snap.exists:
-                return None
+        if not (is_pending or is_abandoned):
+            # URL sudah diambil orang lain — coba lagi
+            if attempt < 2:
+                await asyncio.sleep(0.3)
+            continue
 
-            data = doc_snap.to_dict()
-            curr_status = data.get("status")
-            curr_assigned_at = data.get("assigned_at")
-
-            # Validasi kelayakan klaim dalam transaksi
-            is_pending = (curr_status == "PENDING")
-            is_abandoned = (
-                curr_status == "PROCESSING" and
-                curr_assigned_at and
-                curr_assigned_at < (datetime.now(TZ) - timedelta(minutes=5)).isoformat()
-            )
-
-            if is_pending or is_abandoned:
-                transaction.update(doc_ref, {
-                    "status": "PROCESSING",
-                    "verified_by": user_id_str,
-                    "assigned_at": datetime.now(TZ).isoformat()
-                })
-                data["id"] = doc_snap.id
-                data["status"] = "PROCESSING"
-                data["verified_by"] = user_id_str
-                return data
-            return None
-
-        claimed = await _claim_tx(db_client.transaction(), doc_ref)
-        if claimed:
-            return claimed
+        # Update langsung (optimistic — tanpa transaction)
+        try:
+            doc_ref = sheet_urls_col().document(doc_to_claim.id)
+            await doc_ref.update({
+                "status":      "PROCESSING",
+                "verified_by": user_id_str,
+                "assigned_at": now.isoformat(),
+            })
+            data["id"]          = doc_to_claim.id
+            data["status"]      = "PROCESSING"
+            data["verified_by"] = user_id_str
+            return data
+        except Exception as e:
+            logger.warning(f"[Claim] attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                await asyncio.sleep(0.3)
 
     return None
+
 
 
 async def list_sheet_urls(task_id: str | None = None, date: str | None = None,
