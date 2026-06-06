@@ -15,6 +15,10 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from loguru import logger
 
+import warnings
+# Abaikan warning deprecation dari Firestore SDK agar log tidak penuh spam
+warnings.filterwarnings("ignore", category=UserWarning, message="Detected filter using positional arguments.*")
+
 from bot.config import FIREBASE_CREDENTIALS_JSON, FIREBASE_PROJECT_ID
 
 # ── Init Firebase (singleton) ─────────────────────────────
