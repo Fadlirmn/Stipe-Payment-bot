@@ -10,8 +10,10 @@ services:
     command: python main.py
     env_file: .env
     volumes:
-      - ./credentials.json:/app/credentials.json:ro          # Google Sheets SA
-      - ./firebase-credentials.json:/app/firebase-credentials.json:ro  # Firebase SA
+      - ./credentials.json:/app/credentials.json:ro
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+      - ./bot:/app/bot:ro                                        # ← mount kode bot (hot-reload tanpa rebuild)
+      - ./main.py:/app/main.py:ro                                # ← mount entrypoint
     restart: unless-stopped
     logging:
       driver: json-file
