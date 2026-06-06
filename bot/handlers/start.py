@@ -3,10 +3,11 @@ handlers/start.py — /start, /menu, /help, /me (Firebase version)
 """
 from __future__ import annotations
 
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
 from bot.firebase_db import get_user, update_user
+import bot.firebase_db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.utils.keyboards import main_menu_keyboard, back_keyboard
 from bot.utils.formatters import format_date_id, role_badge, now_wib
@@ -24,18 +25,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Mohon tunggu konfirmasi sebelum menggunakan bot ini.",
             parse_mode="Markdown",
         )
+        # Tombol inline langsung di pesan notifikasi admin
+        approve_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Setujui",  callback_data=f"approve_user:{tg.id}"),
+            InlineKeyboardButton("❌ Tolak",    callback_data=f"reject_user:{tg.id}"),
+        ]])
         for dev_id in DEV_IDS:
             try:
                 await context.bot.send_message(
                     chat_id=dev_id,
                     text=(
                         f"🔔 *Pendaftaran Baru*\n"
-                        f"Nama: {tg.full_name}\n"
-                        f"Username: @{tg.username or 'N/A'}\n"
-                        f"ID: `{tg.id}`\n\n"
-                        f"Gunakan `/approve {tg.id}` untuk menyetujui."
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 Nama     : {tg.full_name}\n"
+                        f"🔗 Username : @{tg.username or 'N/A'}\n\n"
+                        f"Klik tombol di bawah untuk menyetujui atau menolak."
                     ),
                     parse_mode="Markdown",
+                    reply_markup=approve_kb,
                 )
             except Exception:
                 pass
@@ -167,6 +174,89 @@ async def cb_menu_setemail_info(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def cb_approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin klik tombol ✅ Setujui langsung dari pesan notifikasi."""
+    query = update.callback_query
+    await query.answer()
+
+    target_id = int(query.data.split(":")[1])
+    actor     = await get_or_create_user(update)
+    target    = await fdb.get_user(target_id)
+
+    if not target:
+        await query.edit_message_text("❌ User tidak ditemukan di database.")
+        return
+
+    if target.get("role") != "pending":
+        await query.edit_message_text(
+            f"ℹ️ Akun ini sudah punya role *{target.get('role')}* — tidak perlu disetujui lagi.",
+            parse_mode="Markdown",
+        )
+        return
+
+    await fdb.update_user(target_id, role="staff", approved_by=actor["user_id"])
+    await fdb.add_audit_log(actor["user_id"], "user.approve", "user", str(target_id),
+                             {"new_role": "staff"})
+
+    # Edit pesan notifikasi — hapus tombol, tampilkan status
+    await query.edit_message_text(
+        f"✅ *{target.get('full_name')} sudah disetujui sebagai Staff!*\n"
+        f"Disetujui oleh: {actor.get('full_name')}",
+        parse_mode="Markdown",
+    )
+
+    # Notif ke staff yang baru disetujui
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                f"🎉 *Selamat, {target.get('full_name')}!*\n\n"
+                f"Akun kamu sudah disetujui oleh Admin.\n"
+                f"Ketik /menu untuk mulai bekerja. 🚀"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+async def cb_reject_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin klik tombol ❌ Tolak langsung dari pesan notifikasi."""
+    query = update.callback_query
+    await query.answer()
+
+    target_id = int(query.data.split(":")[1])
+    actor     = await get_or_create_user(update)
+    target    = await fdb.get_user(target_id)
+
+    if not target:
+        await query.edit_message_text("❌ User tidak ditemukan di database.")
+        return
+
+    await fdb.update_user(target_id, is_active=False)
+    await fdb.add_audit_log(actor["user_id"], "user.reject", "user", str(target_id), {})
+
+    # Edit pesan notifikasi — hapus tombol, tampilkan status
+    await query.edit_message_text(
+        f"🚫 *{target.get('full_name')} ditolak.*\n"
+        f"Ditolak oleh: {actor.get('full_name')}",
+        parse_mode="Markdown",
+    )
+
+    # Notif ke user yang ditolak
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "🚫 *Maaf, pendaftaran kamu belum bisa disetujui.*\n\n"
+                "Silakan hubungi admin untuk informasi lebih lanjut."
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
 def get_handlers():
     return [
         CommandHandler("start", cmd_start),
@@ -174,7 +264,9 @@ def get_handlers():
         CommandHandler("me",    cmd_me),
         CommandHandler("setemail", cmd_setemail),
         CommandHandler("help",  cmd_help),
-        CallbackQueryHandler(cb_menu_main, pattern="^menu:main$"),
-        CallbackQueryHandler(cb_menu_help, pattern="^menu:help$"),
-        CallbackQueryHandler(cb_menu_setemail_info, pattern="^menu:setemail_info$"),
+        CallbackQueryHandler(cb_menu_main,          pattern="^menu:main$"),
+        CallbackQueryHandler(cb_menu_help,           pattern="^menu:help$"),
+        CallbackQueryHandler(cb_menu_setemail_info,  pattern="^menu:setemail_info$"),
+        CallbackQueryHandler(cb_approve_user,        pattern=r"^approve_user:\d+$"),
+        CallbackQueryHandler(cb_reject_user,         pattern=r"^reject_user:\d+$"),
     ]
