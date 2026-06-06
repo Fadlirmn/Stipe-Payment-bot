@@ -208,7 +208,7 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
     from datetime import datetime, timedelta
     from bot.config import TZ
 
-    db_client = get_db()
+    db_client = db()  # gunakan singleton — bukan get_db() yang buat client baru tiap panggil
     user_id_str = str(user_id)
 
     # 1. Cek apakah staff ini sudah memiliki URL berstatus PROCESSING
@@ -227,9 +227,9 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
         return d
 
     # 2. Cari kandidat URL PENDING atau PROCESSING kedaluwarsa, lalu klaim dengan transaksi
-    for _ in range(3): # Coba 3 kali jika ada konflik transaksi
+    for _ in range(3):  # Coba 3 kali jika ada konflik transaksi
         now = datetime.now(TZ)
-        
+
         # Cari PENDING
         pending_docs = await (
             sheet_urls_col()
@@ -239,7 +239,7 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
             .limit(1)
             .get()
         )
-        
+
         doc_id = None
         if pending_docs:
             doc_id = pending_docs[0].id
@@ -257,30 +257,35 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
             )
             if abandoned_docs:
                 doc_id = abandoned_docs[0].id
-                
+
         if not doc_id:
-            return None # Habis
-            
+            return None  # Habis
+
         doc_ref = sheet_urls_col().document(doc_id)
-        
+
         @async_transactional
         async def _claim_tx(transaction, doc_ref):
-            doc_snap = await transaction.get(doc_ref)
-            if not doc_snap.exists:
+            # transaction.get() di SDK baru mengembalikan async_generator — harus pakai async for
+            doc_snap = None
+            async for snap in transaction.get(doc_ref):
+                doc_snap = snap
+                break
+
+            if doc_snap is None or not doc_snap.exists:
                 return None
-                
+
             data = doc_snap.to_dict()
             curr_status = data.get("status")
             curr_assigned_at = data.get("assigned_at")
-            
+
             # Validasi kelayakan klaim dalam transaksi
             is_pending = (curr_status == "PENDING")
             is_abandoned = (
-                curr_status == "PROCESSING" and 
-                curr_assigned_at and 
+                curr_status == "PROCESSING" and
+                curr_assigned_at and
                 curr_assigned_at < (datetime.now(TZ) - timedelta(minutes=5)).isoformat()
             )
-            
+
             if is_pending or is_abandoned:
                 transaction.update(doc_ref, {
                     "status": "PROCESSING",
@@ -292,11 +297,11 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
                 data["verified_by"] = user_id_str
                 return data
             return None
-            
+
         claimed = await _claim_tx(db_client.transaction(), doc_ref)
         if claimed:
             return claimed
-            
+
     return None
 
 
