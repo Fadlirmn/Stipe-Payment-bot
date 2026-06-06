@@ -306,15 +306,21 @@ async def list_sheet_urls(task_id: str | None = None, date: str | None = None,
     if date:    q = q.where("date", "==", date)
     if status:  q = q.where("status", "==", status)
 
-    all_docs = await q.order_by("created_at", direction=firestore.Query.DESCENDING).get()
-    total = len(all_docs)
-    sliced = all_docs[offset: offset + limit]
-    result = []
-    for d in sliced:
+    # Ambil semua tanpa order_by di query agar tidak memerlukan composite index di Firestore
+    all_docs = await q.get()
+    
+    docs_data = []
+    for d in all_docs:
         item = d.to_dict()
         item["id"] = d.id
-        result.append(item)
-    return result, total
+        docs_data.append(item)
+        
+    # Urutkan secara manual di memori (created_at DESC)
+    docs_data.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    
+    total = len(docs_data)
+    sliced = docs_data[offset: offset + limit]
+    return sliced, total
 
 
 # ══════════════════════════════════════════════════════════
@@ -359,12 +365,15 @@ async def list_progress_by_date(date: str) -> list[dict]:
 
 
 async def list_progress_by_user(user_id: int, limit: int = 21) -> list[dict]:
+    # Ambil tanpa order_by di query agar tidak memerlukan composite index di Firestore
     docs = await (progress_col()
                   .where("user_id", "==", user_id)
-                  .order_by("date", direction=firestore.Query.DESCENDING)
-                  .limit(limit)
                   .get())
-    return [d.to_dict() for d in docs]
+    res = [d.to_dict() for d in docs]
+    # Urutkan di memori (date DESC)
+    res.sort(key=lambda x: x.get("date", ""), reverse=True)
+    return res[:limit]
+
 
 
 # ══════════════════════════════════════════════════════════
