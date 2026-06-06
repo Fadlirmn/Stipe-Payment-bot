@@ -56,6 +56,50 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
+@require_role("admin", "dev")
+async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args:
+        await update.message.reply_text("Penggunaan: `/unban <user_id>`", parse_mode="Markdown")
+        return
+    try:
+        target_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus berupa angka.")
+        return
+
+    actor  = await get_or_create_user(update)
+    target = await fdb.get_user(target_id)
+    if not target:
+        await update.message.reply_text("❌ User tidak ditemukan.")
+        return
+
+    # Aktifkan kembali & pastikan role-nya bukan pending
+    new_role = target.get("role")
+    if new_role in ("pending", None):
+        new_role = "staff"
+    await fdb.update_user(target_id, is_active=True, role=new_role)
+    await fdb.add_audit_log(actor["user_id"], "user.unban", "user", str(target_id),
+                             {"restored_role": new_role})
+
+    await update.message.reply_text(
+        f"✅ User `{target_id}` ({target.get('full_name')}) telah di-*unban* dan kembali aktif sebagai {role_badge(new_role)}.",
+        parse_mode="Markdown",
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "✅ *Akun kamu telah diaktifkan kembali!*\n"
+                "Kamu sudah bisa menggunakan bot lagi.\n"
+                "Ketik /menu untuk memulai."
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
 @require_role("dev")
 async def cmd_setrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
@@ -380,6 +424,7 @@ def get_handlers():
     return [
         config_conv,
         CommandHandler("approve",   cmd_approve),
+        CommandHandler("unban",     cmd_unban),
         CommandHandler("setrole",   cmd_setrole),
         CommandHandler("users",     cmd_users),
         CommandHandler("report",    cmd_report),
