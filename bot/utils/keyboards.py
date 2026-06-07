@@ -56,18 +56,23 @@ def task_list_keyboard(tasks: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def url_action_keyboard(sheet_url_id: str, payment_url: str) -> InlineKeyboardMarkup:
+def url_action_keyboard(sheet_url_id: str, payment_url: str, task_id: str = "") -> InlineKeyboardMarkup:
     """Tombol aksi per URL yang siap diverifikasi."""
-    return InlineKeyboardMarkup([
+    rows = [
         [
             InlineKeyboardButton("🌐 Buka Link Stripe", url=payment_url)
         ],
         [
             InlineKeyboardButton("✅ Verifikasi Sekarang", callback_data=f"url:verify:{sheet_url_id}"),
             InlineKeyboardButton("⏭️ Skip", callback_data=f"url:skip:{sheet_url_id}"),
-        ],
-        [InlineKeyboardButton("🔙 Kembali", callback_data="menu:verif")],
-    ])
+        ]
+    ]
+    if task_id:
+        rows.append([
+            InlineKeyboardButton("📋 Daftar Link", callback_data=f"url:list_page:{task_id}:1")
+        ])
+    rows.append([InlineKeyboardButton("🔙 Kembali", callback_data="menu:verif")])
+    return InlineKeyboardMarkup(rows)
 
 
 def confirm_keyboard(confirm_data: str, cancel_data: str = "menu:main") -> InlineKeyboardMarkup:
