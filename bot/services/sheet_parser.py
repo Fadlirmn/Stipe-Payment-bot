@@ -33,7 +33,7 @@ def _is_stripe_url(url: str) -> bool:
 
 # ── Public API ────────────────────────────────────────────
 
-def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = None) -> list[dict]:
+async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = None) -> list[dict]:
     """
     Mengambil semua baris dari Google Sheet via Apps Script Web App
     yang kolom Date-nya cocok dengan `target_date` (default: hari ini).
@@ -55,9 +55,10 @@ def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = Non
     }
 
     try:
-        resp = httpx.get(APPS_SCRIPT_URL, params=params, timeout=HTTP_TIMEOUT, follow_redirects=True)
-        resp.raise_for_status()
-        payload = resp.json()
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(APPS_SCRIPT_URL, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
     except Exception as exc:
         logger.error(f"[SheetParser] Gagal memanggil Apps Script: {exc}")
         raise

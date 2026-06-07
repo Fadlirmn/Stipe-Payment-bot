@@ -102,7 +102,7 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
     from datetime import date
     tab = task.get("sheet_tab", "Sheet1")
     try:
-        rows = fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
+        rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
     except Exception as exc:
         logger.error(f"[Sync] Error fetching URLs for task {task['task_id']}: {exc}")
         return 0, str(exc)
