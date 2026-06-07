@@ -4,6 +4,7 @@ handlers/verif.py — Alur verifikasi URL dari Google Sheets (Firebase version)
 from __future__ import annotations
 
 from datetime import datetime
+import asyncio
 from loguru import logger
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -340,6 +341,9 @@ async def _show_task_options_menu(
             InlineKeyboardButton("⚡ Mulai Verif (Auto)", callback_data=f"task:start_verif:{task_id}")
         ],
         [
+            InlineKeyboardButton("⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:1")
+        ],
+        [
             InlineKeyboardButton("📋 Lihat Daftar Link", callback_data=f"url:list_page:{task_id}:1")
         ],
         [
@@ -437,6 +441,9 @@ async def _show_url_list(
     if row:
         kb_rows.append(row)
         
+    if urls:
+        kb_rows.append([InlineKeyboardButton("⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:{page}")])
+
     nav_row = []
     if page > 1:
         nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"url:list_page:{task_id}:{page-1}"))
@@ -592,6 +599,128 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _show_url_list(update, context, url_obj["task_id"], url_obj["date"], page)
 
 
+async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("⏳ Memverifikasi semua URL PENDING...")
+    parts = update.callback_query.data.split(":")
+    task_id = parts[2]
+    page = int(parts[3])
+    user = await get_or_create_user(update)
+    today = datetime.now(TZ).date().isoformat()
+
+    task = await fdb.get_task(task_id)
+    if not task:
+        await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
+        return
+
+    # Check quota per staff harian
+    quota_staff = task.get("quota_per_staff", 0)
+    remaining_quota = 999999
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        remaining_quota = max(0, quota_staff - submitted)
+        if remaining_quota <= 0:
+            await update.callback_query.message.reply_text(
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
+                parse_mode="Markdown",
+                reply_markup=back_keyboard()
+            )
+            return
+
+    # Ambil semua URL PENDING untuk hari ini
+    pending_urls, total_pending = await fdb.list_sheet_urls(
+        task_id=task_id, date=today, status="PENDING", limit=500
+    )
+
+    if not pending_urls:
+        await update.callback_query.message.reply_text(
+            "📭 Tidak ada URL PENDING yang perlu diverifikasi.",
+            reply_markup=back_keyboard()
+        )
+        return
+
+    # Batasi dengan remaining_quota
+    urls_to_verify = pending_urls[:remaining_quota]
+    
+    # Beri tahu user bahwa proses sedang berjalan
+    progress_msg = await update.callback_query.message.reply_text(
+        f"⏳ Memproses verifikasi *{len(urls_to_verify)}* URL PENDING secara massal...",
+        parse_mode="Markdown"
+    )
+
+    async def verify_and_update(url_obj):
+        doc_id = url_obj["id"]
+        payment_url = url_obj["payment_url"]
+        
+        # 1. Update ke PROCESSING agar tidak diclaim/diverif ganda
+        try:
+            await fdb.update_sheet_url(doc_id,
+                status="PROCESSING",
+                verified_by=str(user["user_id"]),
+                assigned_at=now_wib().isoformat()
+            )
+        except Exception as e:
+            logger.warning(f"Failed to mark as processing {doc_id}: {e}")
+            return None
+            
+        # 2. Verifikasi URL
+        result = await verify_url(payment_url)
+        
+        # 3. Update status verifikasi di DB
+        await fdb.update_sheet_url(doc_id,
+            status=result.status.value,
+            http_code=result.http_code,
+            error_msg=result.message if not result.is_ok else None,
+            verified_by=user["user_id"],
+            verified_at=now_wib().isoformat(),
+        )
+        
+        # 4. Catat audit log
+        await fdb.add_audit_log(
+            actor_id=user["user_id"], action="url.verify",
+            target_type="sheet_url", target_id=doc_id,
+            detail={"url": payment_url, "status": result.status.value,
+                    "http_code": result.http_code},
+        )
+        
+        return result
+
+    tasks_to_run = [verify_and_update(u) for u in urls_to_verify]
+    results = await asyncio.gather(*tasks_to_run)
+    
+    valid_results = [r for r in results if r is not None]
+    
+    submitted_delta = len(valid_results)
+    ok_delta = sum(1 for r in valid_results if r.is_ok)
+    fail_delta = submitted_delta - ok_delta
+
+    if submitted_delta > 0:
+        await fdb.upsert_progress(
+            task_id=task_id, user_id=user["user_id"], date=today,
+            submitted_delta=submitted_delta,
+            ok_delta=ok_delta,
+            fail_delta=fail_delta
+        )
+
+    try:
+        await progress_msg.delete()
+    except Exception:
+        pass
+
+    await update.callback_query.message.reply_text(
+        f"✅ *Verifikasi Massal Selesai!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Task     : `{task_id}`\n"
+        f"📊 Diproses : {submitted_delta} URL\n"
+        f"🟢 Valid    : {ok_delta}\n"
+        f"🔴/🟡 Gagal : {fail_delta}",
+        parse_mode="Markdown"
+    )
+
+    await _show_url_list(update, context, task_id, today, page)
+
+
 def get_handlers():
     return [
         CommandHandler("verif",  cmd_verif),
@@ -603,5 +732,6 @@ def get_handlers():
         CallbackQueryHandler(cb_url_skip_detail,   pattern=r"^url:skip_detail:.+$"),
         CallbackQueryHandler(cb_url_verify,       pattern=r"^url:verify:.+$"),
         CallbackQueryHandler(cb_url_skip,         pattern=r"^url:skip:.+$"),
+        CallbackQueryHandler(cb_url_verify_all,   pattern=r"^url:verify_all:.+$"),
         CallbackQueryHandler(cb_menu_sync_sheet,  pattern="^menu:sync_sheet$"),
     ]
