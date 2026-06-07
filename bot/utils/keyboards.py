@@ -31,7 +31,6 @@ def main_menu_keyboard(role: str) -> InlineKeyboardMarkup:
         ])
         base.append([
             InlineKeyboardButton("🌐 Dashboard", callback_data="menu:dashboard"),
-            InlineKeyboardButton("📥 Sync Sheet", callback_data="menu:sync_sheet"),
         ])
 
     if role == "dev":

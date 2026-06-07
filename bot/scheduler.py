@@ -47,6 +47,35 @@ async def job_eod_summary(app):
             logger.warning(f"[Scheduler] Gagal kirim EOD ke {u['user_id']}: {e}")
 
 
+async def job_sync_spreadsheets(app):
+    today = datetime.now(TZ).date().isoformat()
+    logger.info(f"[Scheduler] Starting auto-sync spreadsheets for {today}")
+    
+    try:
+        tasks = await fdb.list_tasks(status="active")
+        if not tasks:
+            logger.info("[Scheduler] No active tasks to sync.")
+            return
+            
+        from bot.handlers.verif import _sync_sheet_to_firebase
+        
+        total_synced = 0
+        for task in tasks:
+            try:
+                count, err = await _sync_sheet_to_firebase(task, today)
+                if err:
+                    logger.error(f"[Scheduler] Sync failed for task {task['task_id']}: {err}")
+                else:
+                    logger.info(f"[Scheduler] Synced {count} URLs for task {task['task_id']}")
+                    total_synced += count
+            except Exception as e:
+                logger.error(f"[Scheduler] Error syncing task {task['task_id']}: {e}")
+                
+        logger.info(f"[Scheduler] Auto-sync finished. Total URLs synced: {total_synced}")
+    except Exception as e:
+        logger.error(f"[Scheduler] Auto-sync job error: {e}")
+
+
 def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=str(TZ))
 
@@ -58,5 +87,13 @@ def setup_scheduler(app) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB)")
+    scheduler.add_job(
+        job_sync_spreadsheets,
+        CronTrigger(minute="*/30", timezone=TZ),
+        args=[app],
+        id="sync_spreadsheets",
+        replace_existing=True,
+    )
+
+    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m)")
     return scheduler
