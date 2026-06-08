@@ -154,7 +154,7 @@ function doPost(e) {
         break;
       }
     }
-hanisms at play. The g
+
     if (!exists) {
       targetSheet.appendRow([data.api_key, data.email, data.username, data.tokens, data.renewal_date, new Date(), data.used_status || "", data.active_status || "", data.check_keys_timestamp || ""]);
       if (data.active_status) {
