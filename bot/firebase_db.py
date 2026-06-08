@@ -30,11 +30,18 @@ USER_CACHE_TTL = 120.0  # 2 minutes cache duration
 
 # ── Fallback State ────────────────────────────────────────
 _use_local_sqlite = False
+USE_POSTGRES = bool(os.getenv("POSTGRES_HOST"))
 
 def firestore_fallback(sqlite_func_name):
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
+            if USE_POSTGRES:
+                import bot.postgres_db as pgdb
+                pg_func_name = sqlite_func_name.replace("sqlite_", "postgres_")
+                pg_func = getattr(pgdb, pg_func_name)
+                return await asyncio.to_thread(pg_func, *args, **kwargs)
+            
             global _use_local_sqlite
             if _use_local_sqlite:
                 import bot.sqlite_db as sdb
