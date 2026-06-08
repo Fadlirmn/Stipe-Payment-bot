@@ -64,6 +64,8 @@ function doGet(e) {
         api_key:     String(row[COL_API_KEY]     || "").trim(),
         payment_url: rawUrl,
         notes:       "",
+        date:        formatDate(rowDate),
+        timestamp:   String(rawTs),
         row_index:   i + 1  // 1-based, berguna jika bot perlu update status nanti
       });
     }
@@ -265,14 +267,15 @@ function parseDateValue(val) {
 }
 
 function formatDate(d) {
-  var y  = d.getFullYear();
-  var m  = String(d.getMonth() + 1).padStart(2, "0");
-  var dd = String(d.getDate()).padStart(2, "0");
-  return y + "-" + m + "-" + dd;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tz = ss.getSpreadsheetTimeZone();
+  return Utilities.formatDate(d, tz, "yyyy-MM-dd");
 }
 
 function getTodayStr() {
-  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tz = ss.getSpreadsheetTimeZone();
+  return Utilities.formatDate(new Date(), tz, "yyyy-MM-dd");
 }
 
 function jsonOut(obj) {

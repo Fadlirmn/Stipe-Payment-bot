@@ -115,6 +115,11 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
 
     count = 0
     for row in rows:
+        row_date = row.get("date")
+        if row_date and row_date != target_date:
+            logger.warning(f"[Sync] Row date {row_date} does not match target_date {target_date}. Skipping.")
+            continue
+
         doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
         if existing_ids is not None and doc_id in existing_ids:
             continue
