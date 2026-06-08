@@ -39,7 +39,8 @@ function doGet(e) {
 
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+    var tabName = params.tab || "Sheet1";
+    var sheet = ss.getSheetByName(tabName) || ss.getSheets()[0];
     var data  = sheet.getDataRange().getValues();
 
     var results = [];
