@@ -75,3 +75,9 @@ async def get_user_active_tasks_today(user_id: int, date_str: str) -> list[str]:
 
 async def reset_today(date_str: str) -> tuple[int, int]:
     return await asyncio.to_thread(pgdb.postgres_reset_today, date_str)
+
+async def retry_failed_urls(date_str: str) -> int:
+    return await asyncio.to_thread(pgdb.postgres_retry_failed_urls, date_str)
+
+async def get_all_failed_urls() -> list[dict]:
+    return await asyncio.to_thread(pgdb.postgres_get_all_failed_urls)

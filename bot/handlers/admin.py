@@ -686,6 +686,8 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/backup` — Backup data PostgreSQL ke SQLite lokal\n"
         "• `/restore` — Restore data SQLite lokal ke PostgreSQL\n"
         "• `/reset_today` — Hapus data URL & progress hari ini (Postgres)\n"
+        "• `/retry_failed` — Reset status URL gagal/timeout hari ini ke PENDING\n"
+        "• `/verify_failed` — Verifikasi ulang otomatis semua URL gagal/timeout (lintas waktu)\n"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Manage Tasks", callback_data="menu:manage_tasks")],
@@ -765,6 +767,120 @@ async def cmd_reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_role("admin", "dev")
+async def cmd_retry_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ *Memproses ulang semua URL yang gagal/timeout hari ini...*", parse_mode="Markdown")
+    try:
+        today_str = datetime.now(TZ).date().isoformat()
+        count = await fdb.retry_failed_urls(today_str)
+        if count > 0:
+            await update.message.reply_text(
+                f"✅ *Berhasil Me-reset URL!*\n\n"
+                f"• Tanggal: `{today_str}`\n"
+                f"• Jumlah URL di-reset ke PENDING: `{count}`\n\n"
+                f"_URL tersebut sekarang dapat diambil dan diverifikasi kembali oleh staff._",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"ℹ️ Tidak ada URL gagal (TIMEOUT/HTTP_ERR/FORMAT_ERR) untuk hari ini (`{today_str}`).",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ *Gagal me-reset URL:* `{e}`", parse_mode="Markdown")
+
+
+@require_role("admin", "dev")
+async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = await get_or_create_user(update)
+    status_msg = await update.message.reply_text("⏳ *Mencari semua URL gagal/timeout di database...*", parse_mode="Markdown")
+    
+    try:
+        failed_urls = await fdb.get_all_failed_urls()
+        if not failed_urls:
+            await status_msg.edit_text("ℹ️ Tidak ada URL dengan status gagal (TIMEOUT/HTTP_ERR/ERROR) di database.")
+            return
+            
+        total_failed = len(failed_urls)
+        await status_msg.edit_text(
+            f"⏳ *Menemukan {total_failed} URL gagal dari berbagai waktu.*\n"
+            f"Memulai re-verifikasi otomatis di background... 🚀",
+            parse_mode="Markdown"
+        )
+        
+        sem = asyncio.Semaphore(5)
+        success_count = 0
+        remain_failed = 0
+        
+        async def re_verify_one(url_obj):
+            nonlocal success_count, remain_failed
+            payment_url = url_obj["payment_url"]
+            doc_id = url_obj["id"]
+            task_id = url_obj["task_id"]
+            
+            async with sem:
+                try:
+                    from bot.services.url_verifier import verify_url
+                    result = await verify_url(payment_url)
+                    
+                    db_update = {
+                        "status": result.status.value,
+                        "http_code": result.http_code,
+                        "error_msg": result.message if not result.is_ok else None,
+                        "verified_at": now_wib().isoformat(),
+                    }
+                    await fdb.update_sheet_url(doc_id, **db_update)
+                    
+                    try:
+                        task = await fdb.get_task(task_id)
+                        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+                        from bot.services.sheet_parser import update_sheet_status
+                        await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info="System-AdminReVerify")
+                    except Exception as e:
+                        logger.error(f"[ReVerify] Gagal update status Google Sheet untuk {payment_url}: {e}")
+                        
+                    await fdb.add_audit_log(
+                        actor_id=user["user_id"], action="url.reverify",
+                        target_type="sheet_url", target_id=doc_id,
+                        detail={"url": payment_url, "status": result.status.value, "http_code": result.http_code},
+                    )
+                    
+                    if result.is_ok:
+                        success_count += 1
+                        if url_obj.get("verified_by"):
+                            try:
+                                staff_id = int(url_obj["verified_by"])
+                                await fdb.upsert_progress(
+                                    task_id=task_id,
+                                    user_id=staff_id,
+                                    date=url_obj["date"],
+                                    submitted_delta=0,
+                                    ok_delta=1,
+                                    fail_delta=-1
+                                )
+                            except Exception as e:
+                                logger.error(f"[ReVerify] Gagal update progress staff {url_obj['verified_by']}: {e}")
+                    else:
+                        remain_failed += 1
+                except Exception as ex:
+                    logger.error(f"[ReVerify] Error memproses {payment_url}: {ex}")
+                    remain_failed += 1
+                    
+        await asyncio.gather(*(re_verify_one(u) for u in failed_urls), return_exceptions=True)
+        
+        await update.message.reply_text(
+            f"✅ *Proses Re-verifikasi Selesai!*\n\n"
+            f"• Total URL diperiksa: `{total_failed}`\n"
+            f"• Berhasil (`🟢 OK`): `{success_count}`\n"
+            f"• Tetap Gagal/Timeout: `{remain_failed}`\n\n"
+            f"_URL yang sukses telah otomatis diupdate statusnya di Google Sheets & Database._",
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        await status_msg.edit_text(f"❌ *Proses Re-verifikasi Gagal:* `{e}`")
+
+
+@require_role("admin", "dev")
 async def cmd_sync_sheets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ *Memulai sinkronisasi spreadsheet untuk semua active task ke PostgreSQL...*", parse_mode="Markdown")
     from bot.scheduler import job_sync_spreadsheets
@@ -819,6 +935,8 @@ def get_handlers():
         CommandHandler("restore",       cmd_restore),
         CommandHandler("sync",          cmd_sync_sheets),
         CommandHandler("reset_today",   cmd_reset_today),
+        CommandHandler("retry_failed",  cmd_retry_failed),
+        CommandHandler("verify_failed", cmd_verify_failed),
         CommandHandler("tasks",         cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),

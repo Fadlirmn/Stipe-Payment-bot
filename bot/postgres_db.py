@@ -662,3 +662,67 @@ def postgres_reset_today(date_str: str) -> tuple[int, int]:
     cursor.close()
     conn.close()
     return urls_deleted, progress_deleted
+
+
+def postgres_retry_failed_urls(date_str: str) -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    SELECT id, task_id, verified_by FROM sheet_urls
+    WHERE date = %s AND status IN ('TIMEOUT', 'HTTP_ERR', 'FORMAT_ERR', 'ERROR')
+    """, (date_str,))
+    rows = cursor.fetchall()
+    
+    if not rows:
+        cursor.close()
+        conn.close()
+        return 0
+        
+    count = 0
+    for r in rows:
+        doc_id = r["id"]
+        task_id = r["task_id"]
+        v_by = r["verified_by"]
+        
+        cursor.execute("""
+        UPDATE sheet_urls
+        SET status = 'PENDING',
+            verified_by = NULL,
+            verified_at = NULL,
+            error_msg = NULL,
+            http_code = NULL,
+            api_key_status = NULL
+        WHERE id = %s
+        """, (doc_id,))
+        
+        if v_by and str(v_by).isdigit():
+            try:
+                user_id = int(v_by)
+                cursor.execute("""
+                UPDATE task_progress
+                SET submitted = GREATEST(0, submitted - 1),
+                    verified_fail = GREATEST(0, verified_fail - 1)
+                WHERE task_id = %s AND user_id = %s AND date = %s
+                """, (task_id, user_id, date_str))
+            except Exception:
+                pass
+        count += 1
+        
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return count
+
+
+def postgres_get_all_failed_urls() -> list[dict]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT * FROM sheet_urls
+    WHERE status IN ('TIMEOUT', 'HTTP_ERR', 'ERROR')
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict_clean(r) for r in rows]
