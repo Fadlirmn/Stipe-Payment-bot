@@ -4,6 +4,7 @@ handlers/admin.py — Admin/Dev commands (PostgreSQL version)
 from __future__ import annotations
 
 from datetime import datetime
+import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
