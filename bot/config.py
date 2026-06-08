@@ -16,10 +16,6 @@ DEV_IDS: list[int] = [
 # ── Google Apps Script (pengganti Google Sheets API) ────────
 APPS_SCRIPT_URL: str = os.getenv("APPS_SCRIPT_URL", "")
 
-# ── Firebase ──────────────────────────────────────────────
-FIREBASE_CREDENTIALS_JSON: str = os.getenv("FIREBASE_CREDENTIALS_JSON", "./firebase-credentials.json")
-FIREBASE_PROJECT_ID: str = os.getenv("FIREBASE_PROJECT_ID", "")
-
 # ── Timezone ──────────────────────────────────────────────
 TZ_NAME: str = os.getenv("TIMEZONE", "Asia/Jakarta")
 TZ = ZoneInfo(TZ_NAME)

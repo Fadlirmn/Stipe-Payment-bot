@@ -6,7 +6,7 @@ from loguru import logger
 from telegram.ext import Application
 
 from bot.config import BOT_TOKEN
-from bot.firebase_db import init_db
+from bot.db import init_db
 from bot.scheduler import setup_scheduler
 
 from bot.handlers import start, task, verif, admin
@@ -17,7 +17,7 @@ from telegram import BotCommand
 
 async def post_init(application: Application) -> None:
     await init_db()
-    logger.info("✅ Firebase Firestore connected")
+    logger.info("✅ PostgreSQL connected")
     
     # Set bot commands list in Telegram UI
     commands = [
@@ -43,7 +43,7 @@ async def post_init(application: Application) -> None:
 
 
 def main():
-    logger.info("🚀 Starting Stripe Verif Bot (Firebase)...")
+    logger.info("🚀 Starting Stripe Verif Bot (PostgreSQL)...")
     
     app = (
         Application.builder()

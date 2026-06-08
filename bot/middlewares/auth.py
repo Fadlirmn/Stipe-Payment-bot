@@ -9,7 +9,7 @@ from typing import Callable
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from bot.firebase_db import get_user, create_user
+from bot.db import get_user, create_user
 from bot.config import DEV_IDS
 
 

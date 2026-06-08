@@ -376,7 +376,7 @@ def postgres_get_next_pending_url(task_id: str, date: str) -> dict | None:
     return dict_clean(row)
 
 
-def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> dict | None:
+def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> tuple[dict | None, list[dict]]:
     from bot.config import TZ
     from datetime import datetime, timedelta
     now = datetime.now(TZ)
@@ -395,45 +395,95 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     if row:
         cursor.close()
         conn.close()
-        return dict_clean(row)
+        return dict_clean(row), []
 
-    # 2. Cari PENDING
+    # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia
     cursor.execute("""
-    SELECT * FROM sheet_urls 
-    WHERE task_id = %s AND date = %s AND status = 'PENDING'
+    SELECT * FROM sheet_urls
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND verified_by = %s
+    ORDER BY created_at ASC, id ASC
     LIMIT 1
-    """, (task_id, date_str))
+    """, (task_id, date_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
-    # 3. Cari PROCESSING ditinggal > 5 menit jika tidak ada pending
-    if not row_to_claim:
-        five_min_ago = (now - timedelta(minutes=5)).isoformat()
+    if row_to_claim:
+        # Update status menjadi PROCESSING
         cursor.execute("""
-        SELECT * FROM sheet_urls 
-        WHERE task_id = %s AND date = %s AND status = 'PROCESSING' AND assigned_at < %s
-        LIMIT 1
-        """, (task_id, date_str, five_min_ago))
-        row_to_claim = cursor.fetchone()
+        UPDATE sheet_urls 
+        SET status = 'PROCESSING', assigned_at = %s
+        WHERE id = %s
+        """, (now.isoformat(), row_to_claim["id"]))
+        conn.commit()
 
-    if not row_to_claim:
+        row_to_claim["status"] = "PROCESSING"
+        row_to_claim["assigned_at"] = now.isoformat()
         cursor.close()
         conn.close()
-        return None
+        return dict_clean(row_to_claim), []
 
-    # Update status menjadi PROCESSING
+    # 3. Cari block 20 PENDING yang belum di-assign ke siapa-siapa (verified_by IS NULL atau '')
     cursor.execute("""
-    UPDATE sheet_urls 
-    SET status = 'PROCESSING', verified_by = %s, assigned_at = %s
-    WHERE id = %s
-    """, (user_id_str, now.isoformat(), row_to_claim["id"]))
-    conn.commit()
+    SELECT * FROM sheet_urls
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+    ORDER BY created_at ASC, id ASC
+    LIMIT 20
+    """, (task_id, date_str))
+    rows = cursor.fetchall()
 
-    row_to_claim["status"] = "PROCESSING"
-    row_to_claim["verified_by"] = user_id_str
-    row_to_claim["assigned_at"] = now.isoformat()
+    if rows:
+        # Baris pertama langsung kita klaim sebagai PROCESSING
+        first_row = rows[0]
+        cursor.execute("""
+        UPDATE sheet_urls
+        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s
+        WHERE id = %s
+        """, (user_id_str, now.isoformat(), first_row["id"]))
+
+        # Sisa baris (2 s.d. 20) kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
+        for r in rows[1:]:
+            cursor.execute("""
+            UPDATE sheet_urls
+            SET verified_by = %s
+            WHERE id = %s
+            """, (user_id_str, r["id"]))
+
+        conn.commit()
+
+        first_row["status"] = "PROCESSING"
+        first_row["verified_by"] = user_id_str
+        first_row["assigned_at"] = now.isoformat()
+        cursor.close()
+        conn.close()
+        return dict_clean(first_row), [dict_clean(r) for r in rows]
+
+    # 4. Cari PROCESSING ditinggal > 5 menit jika tidak ada pending sama sekali
+    five_min_ago = (now - timedelta(minutes=5)).isoformat()
+    cursor.execute("""
+    SELECT * FROM sheet_urls 
+    WHERE task_id = %s AND date = %s AND status = 'PROCESSING' AND assigned_at < %s
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+    """, (task_id, date_str, five_min_ago))
+    row_to_claim = cursor.fetchone()
+
+    if row_to_claim:
+        cursor.execute("""
+        UPDATE sheet_urls 
+        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s
+        WHERE id = %s
+        """, (user_id_str, now.isoformat(), row_to_claim["id"]))
+        conn.commit()
+
+        row_to_claim["status"] = "PROCESSING"
+        row_to_claim["verified_by"] = user_id_str
+        row_to_claim["assigned_at"] = now.isoformat()
+        cursor.close()
+        conn.close()
+        return dict_clean(row_to_claim), []
+
     cursor.close()
     conn.close()
-    return dict_clean(row_to_claim)
+    return None, []
 
 
 def postgres_list_sheet_urls(task_id: str | None = None, date: str | None = None,

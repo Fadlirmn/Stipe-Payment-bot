@@ -101,11 +101,11 @@ function doPost(e) {
         // Warna baris secara dinamis
         var statusUpper = String(data.status).toUpperCase();
         var color = "#ffffff";
-        if (statusUpper === "SUCCESS") {
+        if (statusUpper === "SUCCESS" || statusUpper === "OK") {
           color = "#b7e1cd"; // Hijau muda jika sukses
-        } else if (statusUpper === "ASSIGNED") {
+        } else if (statusUpper.indexOf("ASSIGNED") === 0) {
           color = "#c9daf8"; // Biru muda jika sedang di-assign/proses
-        } else if (statusUpper === "FAILED" || statusUpper === "SKIPPED") {
+        } else if (statusUpper === "FAILED" || statusUpper === "SKIPPED" || statusUpper === "ERROR") {
           color = "#f8cecc"; // Merah muda jika gagal/error atau dilewati
         }
         sheet.getRange(i + 1, 1, 1, sheet.getLastColumn()).setBackground(color);

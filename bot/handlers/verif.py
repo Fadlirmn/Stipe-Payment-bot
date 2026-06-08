@@ -10,7 +10,7 @@ from loguru import logger
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
-import bot.firebase_db as fdb
+import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
 from bot.services.url_verifier import verify_url
@@ -102,32 +102,38 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, str | None]:
     from datetime import date
     import hashlib
+
     tab = task.get("sheet_tab", "Sheet1")
+    task_id = task["task_id"]
+
     try:
         rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
     except Exception as exc:
-        logger.error(f"[Sync] Error fetching URLs for task {task['task_id']}: {exc}")
+        logger.error(f"[Sync] Error fetching URLs for task {task_id}: {exc}")
         return 0, str(exc)
 
     if not rows:
         return 0, None
 
-    # Fetch all existing doc IDs for this task and date to check in memory
+    # ── Ambil existing doc IDs agar tidak double-insert ──
+    existing_ids: set | None = None
     try:
-        docs = await fdb.sheet_urls_col().where("task_id", "==", task["task_id"]).where("date", "==", target_date).select([]).get()
-        existing_ids = {d.id for d in docs}
+        pg_urls, _ = await fdb.list_sheet_urls(
+            task_id=task_id, date=target_date, status=None, limit=10000, offset=0
+        )
+        existing_ids = {u["id"] for u in pg_urls}
     except Exception as e:
-        logger.warning(f"[Sync] Failed to fetch existing doc IDs: {e}. Falling back to individual check.")
+        logger.warning(f"[Sync] Failed to fetch existing IDs: {e}. Falling back to individual check.")
         existing_ids = None
 
     count = 0
     for row in rows:
-        doc_id = hashlib.md5(f"{task['task_id']}_{row['payment_url']}".encode("utf-8")).hexdigest()
+        doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
         if existing_ids is not None and doc_id in existing_ids:
             continue
 
         await fdb.add_sheet_url(
-            task_id=task["task_id"],
+            task_id=task_id,
             date=target_date,
             account=row["account"],
             payment_url=row["payment_url"],
@@ -164,7 +170,26 @@ async def _show_next_pending_url(
             await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
             return
 
-    url_obj = await fdb.get_or_claim_next_url(task_id, today, user_id)
+    url_obj, claimed_urls = await fdb.get_or_claim_next_url(task_id, today, user_id)
+
+    if claimed_urls:
+        user_data = await fdb.get_user(user_id)
+        username = user_data.get("username") if user_data else None
+        full_name = user_data.get("full_name") if user_data else None
+        staff_str = f"@{username}" if username else (full_name if full_name else str(user_id))
+        status_str = f"ASSIGNED - {staff_str}"
+        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+
+        sem = asyncio.Semaphore(5)
+        async def safe_update(u):
+            async with sem:
+                try:
+                    await update_sheet_status(u["payment_url"], status_str, tab_name=tab, staff_info=staff_str)
+                except Exception as e:
+                    logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk {u['payment_url']}: {e}")
+
+        # Jalankan update secara paralel
+        await asyncio.gather(*(safe_update(u) for u in claimed_urls), return_exceptions=True)
 
     if not url_obj:
         total   = await fdb.count_sheet_urls(task_id, today)
@@ -239,6 +264,22 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         verified_at=now_wib().isoformat(),
     )
 
+    # Update status ke Google Sheet
+    username = user.get("username")
+    full_name = user.get("full_name")
+    staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+    task = await fdb.get_task(task_id)
+    tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+    try:
+        await update_sheet_status(
+            payment_url,
+            result.status.value,
+            tab_name=tab,
+            staff_info=staff_str
+        )
+    except Exception as e:
+        logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify: {e}")
+
     # Progress tetap dicatat di Firebase untuk ditampilkan di dashboard/laporan
 
     await fdb.upsert_progress(
@@ -280,7 +321,21 @@ async def cb_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_at=now_wib().isoformat(),
         )
 
-
+        # Update status ke Google Sheet
+        username = user.get("username")
+        full_name = user.get("full_name")
+        staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+        task = await fdb.get_task(url_obj["task_id"])
+        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+        try:
+            await update_sheet_status(
+                url_obj["payment_url"],
+                "SKIPPED",
+                tab_name=tab,
+                staff_info=staff_str
+            )
+        except Exception as e:
+            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk skip: {e}")
 
         await _show_next_pending_url(
             update, context, url_obj["task_id"], user["user_id"], url_obj["date"]

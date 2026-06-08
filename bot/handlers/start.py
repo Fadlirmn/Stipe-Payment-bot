@@ -6,8 +6,8 @@ from __future__ import annotations
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
-from bot.firebase_db import get_user, update_user
-import bot.firebase_db as fdb
+from bot.db import get_user, update_user
+import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.utils.keyboards import main_menu_keyboard, back_keyboard
 from bot.utils.formatters import format_date_id, role_badge, now_wib

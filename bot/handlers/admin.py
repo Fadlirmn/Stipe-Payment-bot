@@ -11,7 +11,7 @@ from telegram.ext import (
     ConversationHandler, MessageHandler, filters
 )
 
-import bot.firebase_db as fdb
+import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_role
 from bot.utils.keyboards import back_keyboard
 from bot.utils.formatters import role_badge, progress_bar, now_wib
@@ -417,11 +417,47 @@ async def cb_task_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(pause_label, callback_data=pause_cb),
         ],
         [
+            InlineKeyboardButton("🔄 Sync Sheet", callback_data=f"task:sync:{task_id}"),
             InlineKeyboardButton("🗑️ Hapus Task", callback_data=f"task:delete_confirm:{task_id}"),
         ],
         [InlineKeyboardButton("🔙 Daftar Task", callback_data="menu:manage_tasks")],
     ])
     await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def cb_task_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    task = await fdb.get_task(task_id)
+    if not task:
+        await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
+        return
+
+    msg_status = await update.callback_query.message.reply_text(
+        f"⏳ Sedang sinkronisasi spreadsheet untuk task `{task['title']}`...",
+        parse_mode="Markdown"
+    )
+
+    from bot.handlers.verif import _sync_sheet_to_firebase
+    today = datetime.now(TZ).date().isoformat()
+    count, err = await _sync_sheet_to_firebase(task, today)
+
+    if err:
+        await msg_status.edit_text(
+            f"❌ *Gagal mengambil URL dari Sheet:*\n`{err}`\n\n"
+            f"Pastikan APPS_SCRIPT_URL di .env sudah benar dan dideploy.",
+            parse_mode="Markdown"
+        )
+    else:
+        await msg_status.edit_text(
+            f"✅ *Sinkronisasi Selesai!*\n"
+            f"Berhasil menarik *{count}* URL baru dari Google Sheets.",
+            parse_mode="Markdown"
+        )
+
+    # Tampilkan kembali detail task yang ter-update
+    update.callback_query.data = f"task:detail:{task_id}"
+    await cb_task_detail(update, context)
 
 
 async def cb_task_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -610,7 +646,8 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/setrole <user_id> <role>` — Ubah role user\n"
         "• `/broadcast <pesan>` — Kirim pesan broadcast ke semua staff\n"
         "• `/tasks` — Manage semua task\n"
-        "• `/backup` — Backup data ke SQLite lokal\n"
+        "• `/backup` — Backup data PostgreSQL ke SQLite lokal\n"
+        "• `/restore` — Restore data SQLite lokal ke PostgreSQL\n"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Manage Tasks", callback_data="menu:manage_tasks")],
@@ -651,9 +688,9 @@ async def cb_menu_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_role("admin", "dev")
 async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ *Memulai proses SQLite backup lokal...*", parse_mode="Markdown")
-    from bot.backup import backup_firestore_to_sqlite
-    success, msg = await backup_firestore_to_sqlite()
+    await update.message.reply_text("⏳ *Memulai proses SQLite backup lokal dari PostgreSQL...*", parse_mode="Markdown")
+    from bot.backup import backup_postgres_to_sqlite
+    success, msg = await backup_postgres_to_sqlite()
     if success:
         await update.message.reply_text(f"✅ *Backup Berhasil!*\n\n`{msg}`", parse_mode="Markdown")
     else:
@@ -662,16 +699,24 @@ async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_role("admin", "dev")
 async def cmd_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ *Memulai proses sinkronisasi dari SQLite lokal ke Firestore Cloud...*", parse_mode="Markdown")
-    from bot.backup import restore_sqlite_to_firestore
-    success, msg = await restore_sqlite_to_firestore()
+    await update.message.reply_text("⏳ *Memulai proses pemulihan dari SQLite lokal ke PostgreSQL...*", parse_mode="Markdown")
+    from bot.backup import restore_sqlite_to_postgres
+    success, msg = await restore_sqlite_to_postgres()
     if success:
-        # Reset fallback flag so the bot switches back to using Firestore for subsequent operations
-        import bot.firebase_db as fdb
-        fdb._use_local_sqlite = False
-        await update.message.reply_text(f"✅ *Restore/Sync Berhasil!*\n\n`{msg}`\n\nBot kembali menggunakan Firestore Cloud.", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ *Restore Berhasil!*\n\n`{msg}`", parse_mode="Markdown")
     else:
-        await update.message.reply_text(f"❌ *Restore/Sync Gagal!*\n\n`{msg}`", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ *Restore Gagal!*\n\n`{msg}`", parse_mode="Markdown")
+
+
+@require_role("admin", "dev")
+async def cmd_sync_sheets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ *Memulai sinkronisasi spreadsheet untuk semua active task ke PostgreSQL...*", parse_mode="Markdown")
+    from bot.scheduler import job_sync_spreadsheets
+    try:
+        await job_sync_spreadsheets(context.application)
+        await update.message.reply_text("✅ *Sinkronisasi Google Sheets selesai!*", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ *Sinkronisasi Gagal!*\n\n`{e}`", parse_mode="Markdown")
 
 
 def get_handlers():
@@ -716,6 +761,7 @@ def get_handlers():
         CommandHandler("broadcast",     cmd_broadcast),
         CommandHandler("backup",        cmd_backup),
         CommandHandler("restore",       cmd_restore),
+        CommandHandler("sync",          cmd_sync_sheets),
         CommandHandler("tasks",         cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),
@@ -724,6 +770,7 @@ def get_handlers():
         CallbackQueryHandler(cb_menu_reminder,      pattern="^menu:reminder$"),
         CallbackQueryHandler(cb_menu_manage_tasks,  pattern="^menu:manage_tasks$"),
         CallbackQueryHandler(cb_task_detail,        pattern="^task:detail:"),
+        CallbackQueryHandler(cb_task_sync_sheet,    pattern="^task:sync:"),
         CallbackQueryHandler(cb_task_pause,         pattern="^task:pause:"),
         CallbackQueryHandler(cb_task_activate,      pattern="^task:activate:"),
         CallbackQueryHandler(cb_task_delete_confirm,pattern="^task:delete_confirm:"),

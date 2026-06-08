@@ -8,7 +8,7 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 
-import bot.firebase_db as fdb
+import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.utils.keyboards import back_keyboard
 from bot.utils.formatters import progress_bar, now_wib, format_date_id, task_status_badge

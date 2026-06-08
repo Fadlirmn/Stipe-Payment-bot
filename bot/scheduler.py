@@ -1,15 +1,14 @@
 """
-scheduler.py — APScheduler jobs (Firebase version)
+scheduler.py — APScheduler jobs (PostgreSQL version)
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
-import bot.firebase_db as fdb
+import bot.db as fdb
 from bot.config import TZ
 
 
@@ -17,13 +16,16 @@ async def job_eod_summary(app):
     today = datetime.now(TZ).date().isoformat()
     logger.info(f"[Scheduler] EOD summary for {today}")
 
-    tasks = await fdb.list_tasks()
+    tasks = await fdb.list_tasks(None)  # semua status
     total, ok, pending = 0, 0, 0
     for task in tasks:
         t = await fdb.count_sheet_urls(task["task_id"], today)
         o = await fdb.count_sheet_urls(task["task_id"], today, status="OK")
         p = await fdb.count_sheet_urls(task["task_id"], today, status="PENDING")
         total += t; ok += o; pending += p
+
+    admins = await fdb.list_users(role="admin")
+    devs   = await fdb.list_users(role="dev")
 
     pct   = int(ok / total * 100) if total > 0 else 0
     text  = (
@@ -36,8 +38,6 @@ async def job_eod_summary(app):
         f"_Laporan otomatis dari Stripe Verif Bot_"
     )
 
-    admins = await fdb.list_users(role="admin")
-    devs   = await fdb.list_users(role="dev")
     for u in admins + devs:
         try:
             await app.bot.send_message(
@@ -76,14 +76,14 @@ async def job_sync_spreadsheets(app):
         logger.error(f"[Scheduler] Auto-sync job error: {e}")
 
 
-async def job_local_backup(app):
-    logger.info("[Scheduler] Starting local SQLite backup...")
-    from bot.backup import backup_firestore_to_sqlite
-    success, msg = await backup_firestore_to_sqlite()
+async def job_local_backup():
+    logger.info("[Scheduler] Starting periodic SQLite backup from PostgreSQL...")
+    from bot.backup import backup_postgres_to_sqlite
+    success, msg = await backup_postgres_to_sqlite()
     if success:
-        logger.info(f"[Scheduler] Backup success: {msg}")
+        logger.info(f"[Scheduler] {msg}")
     else:
-        logger.error(f"[Scheduler] Backup failed: {msg}")
+        logger.error(f"[Scheduler] {msg}")
 
 
 def setup_scheduler(app) -> AsyncIOScheduler:
@@ -108,7 +108,6 @@ def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler.add_job(
         job_local_backup,
         CronTrigger(hour="*/3", timezone=TZ),
-        args=[app],
         id="local_backup",
         replace_existing=True,
     )
