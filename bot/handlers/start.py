@@ -38,12 +38,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Klik tombol di bawah untuk menyetujui atau menolak."
         )
 
-        # Kumpulkan semua penerima: DEV_IDS + semua admin aktif di database
+        # Kumpulkan semua penerima: DEV_IDS + semua admin/dev aktif di database
         notify_ids = set(DEV_IDS)
         try:
             all_users = await fdb.list_users()
             for u in all_users:
-                if u.get("role") == "admin" and u.get("is_active", True):
+                if u.get("role") in ("admin", "dev") and u.get("is_active", True):
                     notify_ids.add(u["user_id"])
         except Exception:
             pass
