@@ -57,12 +57,12 @@ async def job_sync_spreadsheets(app):
             logger.info("[Scheduler] No active tasks to sync.")
             return
             
-        from bot.handlers.verif import _sync_sheet_to_firebase
+        from bot.handlers.verif import _sync_sheet_to_db
         
         total_synced = 0
         for task in tasks:
             try:
-                count, err = await _sync_sheet_to_firebase(task, today)
+                count, err = await _sync_sheet_to_db(task, today)
                 if err:
                     logger.error(f"[Scheduler] Sync failed for task {task['task_id']}: {err}")
                 else:

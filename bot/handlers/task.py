@@ -1,5 +1,5 @@
 """
-handlers/task.py — /task /progress /history (Firebase version)
+handlers/task.py — /task /progress /history (PostgreSQL version)
 """
 from __future__ import annotations
 

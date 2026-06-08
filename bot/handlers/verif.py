@@ -1,5 +1,5 @@
 """
-handlers/verif.py — Alur verifikasi URL dari Google Sheets (Firebase version)
+handlers/verif.py — Alur verifikasi URL dari Google Sheets (PostgreSQL version)
 """
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _show_task_options_menu(update, context, task, user, today)
 
 
-async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, str | None]:
+async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | None]:
     from datetime import date
     import hashlib
 
@@ -294,7 +294,7 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify: {e}")
 
-    # Progress tetap dicatat di Firebase untuk ditampilkan di dashboard/laporan
+    # Progress tetap dicatat di database untuk ditampilkan di dashboard/laporan
 
     await fdb.upsert_progress(
         task_id=task_id, user_id=user["user_id"], date=today,
@@ -382,7 +382,7 @@ async def cb_menu_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE)
     report_lines = [f"🔄 *SYNC SPREADSHEET — {today}*\n━━━━━━━━━━━━━━━━━━━━"]
     total_synced = 0
     for task in tasks:
-        count, err = await _sync_sheet_to_firebase(task, today)
+        count, err = await _sync_sheet_to_db(task, today)
         if err:
             report_lines.append(f"📌 `{task['task_id']}`: ❌ Error: `{err}`")
         else:

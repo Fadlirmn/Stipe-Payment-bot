@@ -1,5 +1,5 @@
 """
-middlewares/auth.py — Role-based access guard (Firebase version)
+middlewares/auth.py — Role-based access guard (PostgreSQL version)
 """
 from __future__ import annotations
 

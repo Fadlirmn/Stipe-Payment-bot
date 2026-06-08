@@ -1,5 +1,5 @@
 """
-handlers/start.py — /start, /menu, /help, /me (Firebase version)
+handlers/start.py — /start, /menu, /help, /me (PostgreSQL version)
 """
 from __future__ import annotations
 

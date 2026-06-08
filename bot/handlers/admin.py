@@ -1,5 +1,5 @@
 """
-handlers/admin.py — Admin/Dev commands (Firebase version)
+handlers/admin.py — Admin/Dev commands (PostgreSQL version)
 """
 from __future__ import annotations
 
@@ -454,9 +454,9 @@ async def cb_task_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="Markdown"
     )
 
-    from bot.handlers.verif import _sync_sheet_to_firebase
+    from bot.handlers.verif import _sync_sheet_to_db
     today = datetime.now(TZ).date().isoformat()
-    count, err = await _sync_sheet_to_firebase(task, today)
+    count, err = await _sync_sheet_to_db(task, today)
 
     if err:
         await msg_status.edit_text(
