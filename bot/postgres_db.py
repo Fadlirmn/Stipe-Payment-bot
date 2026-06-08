@@ -598,3 +598,16 @@ def postgres_add_audit_log(actor_id: int, action: str, target_type: str,
     conn.commit()
     cursor.close()
     conn.close()
+
+
+def postgres_get_user_active_tasks_today(user_id: int, date_str: str) -> list[str]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT DISTINCT task_id FROM sheet_urls
+    WHERE verified_by = %s AND date = %s AND status IN ('PROCESSING', 'PENDING')
+    """, (str(user_id), date_str))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [r["task_id"] for r in rows]

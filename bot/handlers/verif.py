@@ -30,17 +30,41 @@ async def cmd_verif(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Kalau task aktif cuma 1, langsung tampilkan menu opsi task
-    if len(tasks) == 1:
-        user  = await get_or_create_user(update)
-        today = datetime.now(TZ).date().isoformat()
+    user = await get_or_create_user(update)
+    today = datetime.now(TZ).date().isoformat()
+
+    # Periksa antrean aktif staff pada task lain hari ini
+    active_assigned_tasks = await fdb.get_user_active_tasks_today(user["user_id"], today)
+
+    warning_text = ""
+    # Peringatan jika ada 2 atau lebih daily task aktif hari ini
+    if len(tasks) >= 2:
+        warning_text += (
+            "⚠️ *Peringatan Jadwal:* Terdapat *{count} task* aktif berjalan hari ini.\n"
+            "Harap atur waktu pengerjaan Anda agar jadwal harian tidak tumpang tindih.\n\n"
+        ).format(count=len(tasks))
+
+    if active_assigned_tasks:
+        active_tasks_str = ", ".join([f"`{t}`" for t in active_assigned_tasks])
+        warning_text += (
+            f"🔔 *Antrean Aktif:* Anda masih memiliki tugas verifikasi yang belum selesai pada task: {active_tasks_str}.\n"
+            f"Selesaikan antrean tersebut terlebih dahulu untuk mencegah penumpukan tugas.\n\n"
+        )
+
+    # Kalau task aktif cuma 1 dan tidak ada antrean aktif di task lain, langsung tampilkan menu opsi task
+    if len(tasks) == 1 and not active_assigned_tasks:
         await _show_task_options_menu(update, context, tasks[0], user, today)
         return
 
+    text = (
+        f"🔗 *VERIFIKASI URL HARI INI*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{warning_text}"
+        f"Pilih task untuk memulai verifikasi:"
+    )
+
     await update.effective_message.reply_text(
-        "🔗 *VERIFIKASI URL HARI INI*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Pilih task untuk memulai verifikasi:",
+        text,
         parse_mode="Markdown",
         reply_markup=task_list_keyboard(tasks),
     )

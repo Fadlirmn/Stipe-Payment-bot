@@ -69,3 +69,6 @@ async def list_progress_by_user(user_id: int, limit: int = 21) -> list[dict]:
 
 async def add_audit_log(actor_id: int, action: str, target_type: str, target_id: str, detail: dict | None = None):
     return await asyncio.to_thread(pgdb.postgres_add_audit_log, actor_id, action, target_type, target_id, detail)
+
+async def get_user_active_tasks_today(user_id: int, date_str: str) -> list[str]:
+    return await asyncio.to_thread(pgdb.postgres_get_user_active_tasks_today, user_id, date_str)
