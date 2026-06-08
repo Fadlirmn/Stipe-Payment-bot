@@ -535,8 +535,19 @@ async def _show_url_list(
             notes = u.get("notes") or ""
             notes_str = f" ({notes})" if notes else ""
             
+            staff_str = ""
+            verified_by_id = u.get("verified_by")
+            if verified_by_id:
+                try:
+                    staff_user = await fdb.get_user(int(verified_by_id))
+                    if staff_user:
+                        staff_name = staff_user.get("full_name") or staff_user.get("username") or verified_by_id
+                        staff_str = f" | 👤 {staff_name}"
+                except Exception:
+                    pass
+
             text_lines.append(
-                f"{idx}. {emoji} *{acc}*{notes_str}\n"
+                f"{idx}. {emoji} *{acc}*{notes_str}{staff_str}\n"
                 f"   🔗 [Buka Stripe Checkout]({u['payment_url']})"
             )
             
@@ -622,6 +633,16 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "SKIPPED": "⏭️"
     }.get(url_obj.get("status"), "⚪")
     
+    staff_name = "-"
+    verified_by_id = url_obj.get("verified_by")
+    if verified_by_id:
+        try:
+            staff_user = await fdb.get_user(int(verified_by_id))
+            if staff_user:
+                staff_name = staff_user.get("full_name") or staff_user.get("username") or verified_by_id
+        except Exception:
+            pass
+
     text = (
         f"🔗 *DETAIL URL VERIFIKASI*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -629,6 +650,7 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"📅 Tanggal  : {today}\n"
         f"👤 Akun     : {url_obj.get('account') or '-'}\n"
         f"📝 Catatan  : {url_obj.get('notes') or '-'}\n"
+        f"👤 Staff    : {staff_name}\n"
         f"📊 Status   : {status_emoji} {url_obj.get('status')}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🔗 URL:\n`{url_obj['payment_url']}`\n\n"
