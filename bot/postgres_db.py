@@ -646,3 +646,19 @@ def postgres_get_user_active_tasks_today(user_id: int, date_str: str) -> list[st
     cursor.close()
     conn.close()
     return [r["task_id"] for r in rows]
+
+
+def postgres_reset_today(date_str: str) -> tuple[int, int]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM sheet_urls WHERE date = %s", (date_str,))
+    urls_deleted = cursor.rowcount
+    
+    cursor.execute("DELETE FROM task_progress WHERE date = %s", (date_str,))
+    progress_deleted = cursor.rowcount
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return urls_deleted, progress_deleted

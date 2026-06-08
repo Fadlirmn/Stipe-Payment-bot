@@ -685,6 +685,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/tasks` — Manage semua task\n"
         "• `/backup` — Backup data PostgreSQL ke SQLite lokal\n"
         "• `/restore` — Restore data SQLite lokal ke PostgreSQL\n"
+        "• `/reset_today` — Hapus data URL & progress hari ini (Postgres)\n"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Manage Tasks", callback_data="menu:manage_tasks")],
@@ -746,6 +747,24 @@ async def cmd_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_role("admin", "dev")
+async def cmd_reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ *Memulai proses reset database hari ini...*", parse_mode="Markdown")
+    try:
+        today_str = datetime.now(TZ).date().isoformat()
+        urls_del, prog_del = await fdb.reset_today(today_str)
+        await update.message.reply_text(
+            f"✅ *Reset Database Berhasil!*\n\n"
+            f"• Tanggal: `{today_str}`\n"
+            f"• URL terhapus: `{urls_del}`\n"
+            f"• Progress terhapus: `{prog_del}`\n\n"
+            f"_Anda sekarang dapat melakukan Sync Sheet kembali._",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ *Reset Database Gagal!*\n\n`{e}`", parse_mode="Markdown")
+
+
+@require_role("admin", "dev")
 async def cmd_sync_sheets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ *Memulai sinkronisasi spreadsheet untuk semua active task ke PostgreSQL...*", parse_mode="Markdown")
     from bot.scheduler import job_sync_spreadsheets
@@ -799,6 +818,7 @@ def get_handlers():
         CommandHandler("backup",        cmd_backup),
         CommandHandler("restore",       cmd_restore),
         CommandHandler("sync",          cmd_sync_sheets),
+        CommandHandler("reset_today",   cmd_reset_today),
         CommandHandler("tasks",         cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),
