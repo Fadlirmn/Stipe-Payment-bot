@@ -15,6 +15,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from loguru import logger
 import time
+import asyncio
+import functools
 
 import warnings
 # Abaikan warning deprecation dari Firestore SDK agar log tidak penuh spam
@@ -25,6 +27,31 @@ from bot.config import FIREBASE_CREDENTIALS_JSON, FIREBASE_PROJECT_ID
 # ── User Cache ────────────────────────────────────────────
 _user_cache: dict[int, tuple[dict | None, float]] = {}
 USER_CACHE_TTL = 120.0  # 2 minutes cache duration
+
+# ── Fallback State ────────────────────────────────────────
+_use_local_sqlite = False
+
+def firestore_fallback(sqlite_func_name):
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            global _use_local_sqlite
+            if _use_local_sqlite:
+                import bot.sqlite_db as sdb
+                s_func = getattr(sdb, sqlite_func_name)
+                return await asyncio.to_thread(s_func, *args, **kwargs)
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.warning(f"[Firebase Fallback] Firestore failed: {e}. Switching to SQLite.")
+                _use_local_sqlite = True
+                import bot.sqlite_db as sdb
+                s_func = getattr(sdb, sqlite_func_name)
+                # Ensure SQLite is initialized
+                sdb.sqlite_init_db()
+                return await asyncio.to_thread(s_func, *args, **kwargs)
+        return wrapper
+    return decorator
 
 # ── Init Firebase (singleton) ─────────────────────────────
 _app = None
@@ -70,6 +97,7 @@ def audit_col():       return db().collection("audit_logs")
 # ══════════════════════════════════════════════════════════
 # USER HELPERS
 # ══════════════════════════════════════════════════════════
+@firestore_fallback("sqlite_get_user")
 async def get_user(user_id: int) -> dict | None:
     now = time.time()
     if user_id in _user_cache:
@@ -83,6 +111,7 @@ async def get_user(user_id: int) -> dict | None:
     return user_data
 
 
+@firestore_fallback("sqlite_create_user")
 async def create_user(user_id: int, username: str, full_name: str, role: str = "pending") -> dict:
     from datetime import datetime
     from bot.config import TZ
@@ -100,12 +129,14 @@ async def create_user(user_id: int, username: str, full_name: str, role: str = "
     return data
 
 
+@firestore_fallback("sqlite_update_user")
 async def update_user(user_id: int, **kwargs):
     await users_col().document(str(user_id)).update(kwargs)
     if user_id in _user_cache:
         del _user_cache[user_id]
 
 
+@firestore_fallback("sqlite_list_users")
 async def list_users(role: str | None = None) -> list[dict]:
     q = users_col()
     if role:
@@ -121,6 +152,7 @@ TASK_CACHE_TTL = 300.0  # 5 minutes cache duration
 # ══════════════════════════════════════════════════════════
 # TASK HELPERS
 # ══════════════════════════════════════════════════════════
+@firestore_fallback("sqlite_get_task")
 async def get_task(task_id: str) -> dict | None:
     now = time.time()
     if task_id in _task_cache:
@@ -134,6 +166,7 @@ async def get_task(task_id: str) -> dict | None:
     return task_data
 
 
+@firestore_fallback("sqlite_create_task")
 async def create_task(task_data: dict) -> dict:
     from datetime import datetime
     from bot.config import TZ
@@ -143,12 +176,14 @@ async def create_task(task_data: dict) -> dict:
     return task_data
 
 
+@firestore_fallback("sqlite_update_task")
 async def update_task(task_id: str, **kwargs):
     await tasks_col().document(task_id).update(kwargs)
     if task_id in _task_cache:
         del _task_cache[task_id]
 
 
+@firestore_fallback("sqlite_list_tasks")
 async def list_tasks(status: str | None = "active") -> list[dict]:
     q = tasks_col()
     if status:
@@ -160,6 +195,7 @@ async def list_tasks(status: str | None = "active") -> list[dict]:
 # ══════════════════════════════════════════════════════════
 # SHEET URL HELPERS
 # ══════════════════════════════════════════════════════════
+@firestore_fallback("sqlite_add_sheet_url")
 async def add_sheet_url(task_id: str, date: str, account: str,
                          payment_url: str, notes: str, check_exists: bool = True) -> str:
     """Tambah URL ke Firestore. Return doc_id."""
@@ -194,6 +230,7 @@ async def add_sheet_url(task_id: str, date: str, account: str,
     return doc_id
 
 
+@firestore_fallback("sqlite_get_sheet_url")
 async def get_sheet_url(doc_id: str) -> dict | None:
     doc = await sheet_urls_col().document(doc_id).get()
     if not doc.exists:
@@ -203,10 +240,12 @@ async def get_sheet_url(doc_id: str) -> dict | None:
     return d
 
 
+@firestore_fallback("sqlite_update_sheet_url")
 async def update_sheet_url(doc_id: str, **kwargs):
     await sheet_urls_col().document(doc_id).update(kwargs)
 
 
+@firestore_fallback("sqlite_count_sheet_urls")
 async def count_sheet_urls(task_id: str, date: str,
                              status: str | None = None) -> int:
     q = (sheet_urls_col()
@@ -220,6 +259,7 @@ async def count_sheet_urls(task_id: str, date: str,
     return int(res[0].value) if res else 0
 
 
+@firestore_fallback("sqlite_get_next_pending_url")
 async def get_next_pending_url(task_id: str, date: str) -> dict | None:
     docs = await (
         sheet_urls_col()
@@ -236,6 +276,7 @@ async def get_next_pending_url(task_id: str, date: str) -> dict | None:
     return d
 
 
+@firestore_fallback("sqlite_get_or_claim_next_url")
 async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> dict | None:
     """
     Mengambil URL yang sedang diproses oleh staff ini, atau mengklaim URL PENDING berikutnya.
@@ -335,7 +376,7 @@ async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> di
     return None
 
 
-
+@firestore_fallback("sqlite_list_sheet_urls")
 async def list_sheet_urls(task_id: str | None = None, date: str | None = None,
                            status: str | None = None, limit: int = 50,
                            offset: int = 0) -> tuple[list[dict], int]:
@@ -370,11 +411,13 @@ def _prog_id(task_id: str, user_id: int, date: str) -> str:
     return f"{task_id}_{user_id}_{date}"
 
 
+@firestore_fallback("sqlite_get_progress")
 async def get_progress(task_id: str, user_id: int, date: str) -> dict | None:
     doc = await progress_col().document(_prog_id(task_id, user_id, date)).get()
     return doc.to_dict() if doc.exists else None
 
 
+@firestore_fallback("sqlite_upsert_progress")
 async def upsert_progress(task_id: str, user_id: int, date: str,
                            submitted_delta: int = 0, ok_delta: int = 0,
                            fail_delta: int = 0):
@@ -399,11 +442,13 @@ async def upsert_progress(task_id: str, user_id: int, date: str,
         })
 
 
+@firestore_fallback("sqlite_list_progress_by_date")
 async def list_progress_by_date(date: str) -> list[dict]:
     docs = await progress_col().where("date", "==", date).get()
     return [d.to_dict() for d in docs]
 
 
+@firestore_fallback("sqlite_list_progress_by_user")
 async def list_progress_by_user(user_id: int, limit: int = 21) -> list[dict]:
     # Ambil tanpa order_by di query agar tidak memerlukan composite index di Firestore
     docs = await (progress_col()
@@ -415,10 +460,10 @@ async def list_progress_by_user(user_id: int, limit: int = 21) -> list[dict]:
     return res[:limit]
 
 
-
 # ══════════════════════════════════════════════════════════
 # AUDIT LOG
 # ══════════════════════════════════════════════════════════
+@firestore_fallback("sqlite_add_audit_log")
 async def add_audit_log(actor_id: int, action: str, target_type: str,
                          target_id: str, detail: dict | None = None):
     from datetime import datetime
@@ -435,10 +480,14 @@ async def add_audit_log(actor_id: int, action: str, target_type: str,
 
 async def init_db():
     """Panggil saat startup untuk memvalidasi koneksi Firebase."""
+    global _use_local_sqlite
     try:
         # Coba baca satu dokumen untuk test koneksi
         await tasks_col().limit(1).get()
         logger.info("[Firebase] Firestore connection OK")
     except Exception as e:
-        logger.error(f"[Firebase] Connection failed: {e}")
-        raise
+        logger.warning(f"[Firebase] Connection failed ({e}). Falling back to SQLite local database.")
+        _use_local_sqlite = True
+        # Inisialisasi database SQLite lokal agar tabel terbentuk
+        from bot.sqlite_db import sqlite_init_db
+        sqlite_init_db()
