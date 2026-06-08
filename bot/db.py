@@ -52,8 +52,8 @@ async def get_next_pending_url(task_id: str, date: str) -> dict | None:
 async def get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> tuple[dict | None, list[dict]]:
     return await asyncio.to_thread(pgdb.postgres_get_or_claim_next_url, task_id, date_str, user_id)
 
-async def list_sheet_urls(task_id: str | None = None, date: str | None = None, status: str | None = None, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-    return await asyncio.to_thread(pgdb.postgres_list_sheet_urls, task_id, date, status, limit, offset)
+async def list_sheet_urls(task_id: str | None = None, date: str | None = None, status: str | None = None, limit: int = 50, offset: int = 0, verified_by: str | None = None) -> tuple[list[dict], int]:
+    return await asyncio.to_thread(pgdb.postgres_list_sheet_urls, task_id, date, status, limit, offset, verified_by)
 
 async def get_progress(task_id: str, user_id: int, date: str) -> dict | None:
     return await asyncio.to_thread(pgdb.postgres_get_progress, task_id, user_id, date)

@@ -520,7 +520,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
 
 def postgres_list_sheet_urls(task_id: str | None = None, date: str | None = None,
                            status: str | None = None, limit: int = 50,
-                           offset: int = 0) -> tuple[list[dict], int]:
+                           offset: int = 0, verified_by: str | None = None) -> tuple[list[dict], int]:
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -535,6 +535,9 @@ def postgres_list_sheet_urls(task_id: str | None = None, date: str | None = None
     if status:
         where_clauses.append("status = %s")
         params.append(status)
+    if verified_by:
+        where_clauses.append("verified_by = %s")
+        params.append(str(verified_by))
 
     where_str = ""
     if where_clauses:
@@ -545,7 +548,7 @@ def postgres_list_sheet_urls(task_id: str | None = None, date: str | None = None
     total = cursor.fetchone()["count"]
 
     # Select limited/offsetted rows
-    select_query = f"SELECT * FROM sheet_urls {where_str} LIMIT %s OFFSET %s"
+    select_query = f"SELECT * FROM sheet_urls {where_str} ORDER BY created_at ASC, id ASC LIMIT %s OFFSET %s"
     select_params = list(params)
     select_params.extend([limit, offset])
     cursor.execute(select_query, tuple(select_params))
