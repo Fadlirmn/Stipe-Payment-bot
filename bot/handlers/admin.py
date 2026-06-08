@@ -326,12 +326,24 @@ async def ct_get_repeat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await fdb.add_audit_log(actor["user_id"], "task.create", "task", task_id,
                              {"title": task_data["title"]})
 
+    # Cek overlapping daily tasks
+    active_tasks = await fdb.list_tasks(status="active")
+    daily_active = [t for t in active_tasks if t.get("repeat_type") == "daily"]
+    warning_note = ""
+    if len(daily_active) >= 2:
+        warning_note = (
+            "⚠️ *Peringatan Dev/Admin:*\n"
+            f"Terdapat *{len(daily_active)} task daily* aktif yang berjalan bersamaan hari ini.\n"
+            "Hal ini berisiko menumpuk jadwal/beban kerja harian staff. Pastikan ini disengaja.\n\n"
+        )
+
     await update.message.reply_text(
         f"✅ *Task berhasil dibuat!*\n\n"
         f"ID    : `{task_id}`\n"
         f"Judul : {task_data['title']}\n"
         f"Tab   : {task_data['sheet_tab']}\n"
         f"Repeat: {val}\n\n"
+        f"{warning_note}"
         f"Staff dapat memulai verifikasi dengan /verif",
         parse_mode="Markdown",
         reply_markup=back_keyboard(),
@@ -479,8 +491,19 @@ async def cb_task_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actor = await get_or_create_user(update)
     await fdb.update_task(task_id, status="active")
     await fdb.add_audit_log(actor["user_id"], "task.activate", "task", task_id, {})
+    # Cek overlapping daily tasks
+    active_tasks = await fdb.list_tasks(status="active")
+    daily_active = [t for t in active_tasks if t.get("repeat_type") == "daily"]
+    warning_note = ""
+    if len(daily_active) >= 2:
+        warning_note = (
+            "\n⚠️ *Peringatan Dev/Admin:*\n"
+            f"Terdapat *{len(daily_active)} task daily* aktif yang berjalan bersamaan hari ini.\n"
+            "Hal ini berisiko menumpuk jadwal/beban kerja harian staff. Pastikan ini disengaja.\n"
+        )
+
     await update.callback_query.message.reply_text(
-        f"▶️ Task `{task_id}` diaktifkan kembali.",
+        f"▶️ Task `{task_id}` diaktifkan kembali.{warning_note}",
         parse_mode="Markdown",
         reply_markup=back_keyboard("menu:manage_tasks")
     )
@@ -599,8 +622,19 @@ async def et_get_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await fdb.update_task(task_id, **{field: value})
     await fdb.add_audit_log(actor["user_id"], "task.edit", "task", task_id, {"field": field, "value": str(value)})
 
+    # Cek overlapping daily tasks
+    active_tasks = await fdb.list_tasks(status="active")
+    daily_active = [t for t in active_tasks if t.get("repeat_type") == "daily"]
+    warning_note = ""
+    if len(daily_active) >= 2:
+        warning_note = (
+            "\n⚠️ *Peringatan Dev/Admin:*\n"
+            f"Terdapat *{len(daily_active)} task daily* aktif yang berjalan bersamaan hari ini.\n"
+            "Hal ini berisiko menumpuk jadwal/beban kerja harian staff. Pastikan ini disengaja.\n"
+        )
+
     await update.message.reply_text(
-        f"✅ Task `{task_id}` berhasil diupdate!\n`{field}` → `{value}`",
+        f"✅ Task `{task_id}` berhasil diupdate!\n`{field}` → `{value}`{warning_note}",
         parse_mode="Markdown",
         reply_markup=back_keyboard("menu:manage_tasks")
     )
