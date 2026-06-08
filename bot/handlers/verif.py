@@ -76,25 +76,12 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing_count = await fdb.count_sheet_urls(task_id, today)
     if existing_count == 0:
         await update.callback_query.message.reply_text(
-            f"⏳ Mengambil URL dari spreadsheet untuk tanggal *{today}*...",
+            f"⚠️ *Belum ada URL untuk tanggal {today}* di database.\n"
+            f"Silakan hubungi Admin untuk melakukan sinkronisasi spreadsheet terlebih dahulu.",
             parse_mode="Markdown",
+            reply_markup=back_keyboard()
         )
-        count, err = await _sync_sheet_to_firebase(task, today)
-        if err:
-            await update.callback_query.message.reply_text(
-                f"❌ *Gagal mengambil URL dari Sheet:*\n`{err}`\n\n"
-                f"Pastikan URL Google Apps Script (`APPS_SCRIPT_URL`) di .env sudah benar dan dideploy.",
-                parse_mode="Markdown"
-            )
-            return
-        if count == 0:
-            await update.callback_query.message.reply_text(
-                f"⚠️ *Tidak ditemukan URL aktif untuk tanggal {today}* di Sheet Anda.\n"
-                f"Pastikan kolom Timestamp/Date berisi tanggal hari ini.",
-                parse_mode="Markdown",
-                reply_markup=back_keyboard()
-            )
-            return
+        return
 
     await _show_task_options_menu(update, context, task, user, today)
 
@@ -140,8 +127,6 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
             notes=row["notes"],
             check_exists=(existing_ids is None),
         )
-        # Tandai sebagai ASSIGNED di Google Sheet
-        await update_sheet_status(row["payment_url"], "ASSIGNED", tab_name=tab)
         count += 1
     return count, None
 
