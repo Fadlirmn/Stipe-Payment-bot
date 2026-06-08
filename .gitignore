@@ -11,3 +11,7 @@ data/
 
 # Dashboard di-deploy langsung via Vercel CLI (bukan via Git)
 dashboard-vercel/
+
+# Agent & Discussion logs
+discussions/
+.agents/
