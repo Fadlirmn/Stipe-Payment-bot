@@ -90,7 +90,9 @@ async def verify_url(url: str) -> VerifResult:
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=HTTP_TIMEOUT,
-            headers={"User-Agent": "Mozilla/5.0 (StripeVerifBot/1.0)"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
         ) as client:
             resp = await client.get(url)
             code = resp.status_code
