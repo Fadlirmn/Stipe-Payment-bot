@@ -11,6 +11,8 @@ Koleksi Firestore:
 """
 from __future__ import annotations
 
+import os
+
 import firebase_admin
 from firebase_admin import credentials, firestore
 from loguru import logger
@@ -486,8 +488,18 @@ async def add_audit_log(actor_id: int, action: str, target_type: str,
 
 
 async def init_db():
-    """Panggil saat startup untuk memvalidasi koneksi Firebase."""
+    """Panggil saat startup untuk memvalidasi koneksi."""
     global _use_local_sqlite
+    if USE_POSTGRES:
+        try:
+            from bot.postgres_db import postgres_init_db
+            postgres_init_db()
+            logger.info("[PostgreSQL] Connection OK")
+        except Exception as e:
+            logger.error(f"[PostgreSQL] Connection failed: {e}")
+            raise e
+        return
+
     try:
         # Coba baca satu dokumen untuk test koneksi
         await tasks_col().limit(1).get()
