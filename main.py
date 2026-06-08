@@ -1,16 +1,28 @@
 """
-main.py — Entry point bot (Firebase version)
+main.py — Entry point bot (PostgreSQL version)
 """
 import asyncio
 from loguru import logger
-from telegram.ext import Application
+from telegram.ext import Application, ContextTypes
 
 from bot.config import BOT_TOKEN
 from bot.db import init_db
 from bot.scheduler import setup_scheduler
 
 from bot.handlers import start, task, verif, admin
+import telegram.error
 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error occurring during update handling."""
+    err = context.error
+    if isinstance(err, telegram.error.BadRequest) and "Query is too old" in str(err):
+        logger.warning(f"[Telegram] Callback query expired (Query is too old): {err}")
+        return
+    if isinstance(err, telegram.error.TimedOut):
+        logger.warning(f"[Telegram] Request timed out: {err}")
+        return
+    logger.exception(f"[Telegram] Exception while handling an update:", exc_info=err)
 
 
 from telegram import BotCommand
@@ -51,6 +63,8 @@ def main():
         .post_init(post_init)
         .build()
     )
+    
+    app.add_error_handler(error_handler)
     
     for handler in start.get_handlers():   app.add_handler(handler)
     for handler in task.get_handlers():    app.add_handler(handler)
