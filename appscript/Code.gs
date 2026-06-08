@@ -36,6 +36,7 @@ var STRIPE_DOMAINS = /^https?:\/\/(checkout|buy|billing|invoice|pay)?\.?stripe\.
 function doGet(e) {
   var params = (e && e.parameter) ? e.parameter : {};
   var dateStr = params.date || getTodayStr();
+  var isDebug = params.debug === "1";
 
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -44,6 +45,8 @@ function doGet(e) {
     var data  = sheet.getDataRange().getValues();
 
     var results = [];
+    var debugInfo = [];
+
     for (var i = 1; i < data.length; i++) {
       var row       = data[i];
       var rawUrl    = String(row[COL_URL]       || "").trim();
@@ -51,26 +54,47 @@ function doGet(e) {
       var email     = String(row[COL_EMAIL]     || "").trim();
       var currentStatus = String(row[COL_STATUS] || "").trim();
 
-      if (!rawUrl || !STRIPE_DOMAINS.test(rawUrl)) continue;
+      if (!rawUrl) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "empty url" });
+        continue;
+      }
+      if (!STRIPE_DOMAINS.test(rawUrl)) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "invalid stripe domain: " + rawUrl });
+        continue;
+      }
 
       // Skip baris yang sudah punya status (sudah diverifikasi)
-      if (currentStatus) continue;
+      if (currentStatus) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "status is not empty: " + currentStatus });
+        continue;
+      }
 
       var rowDate = parseDateValue(rawTs);
-      if (!rowDate) continue;
-      if (formatDate(rowDate) !== dateStr) continue;
+      if (!rowDate) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "cannot parse date: " + String(rawTs) });
+        continue;
+      }
+
+      var formatted = formatDate(rowDate);
+      if (formatted !== dateStr) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "date mismatch: " + formatted + " vs target " + dateStr });
+        continue;
+      }
 
       results.push({
         account:     email,
         api_key:     String(row[COL_API_KEY]     || "").trim(),
         payment_url: rawUrl,
         notes:       "",
-        date:        formatDate(rowDate),
+        date:        formatted,
         timestamp:   String(rawTs),
         row_index:   i + 1  // 1-based, berguna jika bot perlu update status nanti
       });
     }
 
+    if (isDebug) {
+      return jsonOut({ date: dateStr, count: results.length, debug: debugInfo, data: results });
+    }
     return jsonOut({ date: dateStr, count: results.length, data: results });
 
   } catch (err) {
