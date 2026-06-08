@@ -241,6 +241,21 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today       = url_obj["date"]
     api_key     = url_obj.get("api_key", "")
 
+    # Check quota per staff harian
+    task = await fdb.get_task(task_id)
+    quota_staff = task.get("quota_per_staff", 0) if task else 0
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            await update.callback_query.message.reply_text(
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
+                parse_mode="Markdown",
+                reply_markup=back_keyboard()
+            )
+            return
+
     result = await verify_url(payment_url)
     
     api_key_status = None
@@ -458,6 +473,30 @@ async def _show_url_list(
     today: str,
     page: int,
 ):
+    user = await get_or_create_user(update)
+    task = await fdb.get_task(task_id)
+    quota_staff = task.get("quota_per_staff", 0) if task else 0
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            text = (
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
+                f"Terima kasih atas kerja kerasnya! 🙌"
+            )
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="menu:verif")]])
+            msg = update.callback_query.message if update.callback_query else update.message
+            if update.callback_query:
+                try:
+                    await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+                except Exception:
+                    await msg.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+            else:
+                await msg.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+            return
+
     limit = 5
     offset = (page - 1) * limit
     
@@ -558,6 +597,17 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     task_id = url_obj["task_id"]
     today = url_obj["date"]
+    user = await get_or_create_user(update)
+    
+    task = await fdb.get_task(task_id)
+    quota_staff = task.get("quota_per_staff", 0) if task else 0
+    quota_exceeded = False
+    submitted = 0
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            quota_exceeded = True
     
     status_emoji = {
         "OK": "🟢",
@@ -579,21 +629,32 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"📊 Status   : {status_emoji} {url_obj.get('status')}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🔗 URL:\n`{url_obj['payment_url']}`\n\n"
-        f"Klik *Verifikasi Sekarang* untuk memeriksa URL ini."
     )
     
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
-        ],
-        [
-            InlineKeyboardButton("✅ Verifikasi Sekarang", callback_data=f"url:verify_detail:{doc_id}:{page}"),
-            InlineKeyboardButton("⏭️ Skip", callback_data=f"url:skip_detail:{doc_id}:{page}"),
-        ],
-        [
-            InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
-        ]
-    ])
+    if quota_exceeded:
+        text += f"⚠️ *Kuota Staff Terpenuhi!*\nAnda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini."
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
+            ],
+            [
+                InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
+            ]
+        ])
+    else:
+        text += f"Klik *Verifikasi Sekarang* untuk memeriksa URL ini."
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
+            ],
+            [
+                InlineKeyboardButton("✅ Verifikasi Sekarang", callback_data=f"url:verify_detail:{doc_id}:{page}"),
+                InlineKeyboardButton("⏭️ Skip", callback_data=f"url:skip_detail:{doc_id}:{page}"),
+            ],
+            [
+                InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
+            ]
+        ])
     
     msg = update.callback_query.message
     try:
@@ -618,6 +679,21 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     task_id     = url_obj["task_id"]
     today       = url_obj["date"]
     api_key     = url_obj.get("api_key", "")
+
+    # Check quota per staff harian
+    task = await fdb.get_task(task_id)
+    quota_staff = task.get("quota_per_staff", 0) if task else 0
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        if submitted >= quota_staff:
+            await update.callback_query.message.reply_text(
+                f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
+                parse_mode="Markdown",
+                reply_markup=back_keyboard()
+            )
+            return
 
     result = await verify_url(payment_url)
     
@@ -678,6 +754,21 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     url_obj = await fdb.get_sheet_url(doc_id)
     if url_obj:
+        # Check quota per staff harian
+        task = await fdb.get_task(url_obj["task_id"])
+        quota_staff = task.get("quota_per_staff", 0) if task else 0
+        if quota_staff > 0:
+            prog = await fdb.get_progress(url_obj["task_id"], user["user_id"], url_obj["date"])
+            submitted = prog.get("submitted", 0) if prog else 0
+            if submitted >= quota_staff:
+                await update.callback_query.message.reply_text(
+                    f"⚠️ *Kuota Staff Terpenuhi!*\n"
+                    f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
+                    parse_mode="Markdown",
+                    reply_markup=back_keyboard()
+                )
+                return
+
         await fdb.update_sheet_url(doc_id,
             status="SKIPPED",
             verified_by=user["user_id"],
