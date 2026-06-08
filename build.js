@@ -4,8 +4,10 @@
  * ── Cara pakai ────────────────────────────────────────────────────────────
  * Lokal (development):
  *   1. Salin .env.example → .env dan isi nilainya
- *   2. Jalankan: node build.js
- *   3. Buka dist/index.html di browser
+ *   2. Isi API_URL dengan URL Cloudflare Tunnel Anda
+ *      (contoh: https://xxxx.trycloudflare.com)
+ *   3. Jalankan: node build.js
+ *   4. Buka dist/index.html di browser
  *
  * Vercel (production):
  *   - Set semua variabel di Vercel Dashboard → Settings → Environment Variables
@@ -13,9 +15,8 @@
  *   - File .env lokal diabaikan di Vercel (tidak di-upload)
  *
  * ── Env vars yang dibutuhkan ───────────────────────────────────────────────
- *   FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID,
- *   FIREBASE_STORAGE_BUCKET, FIREBASE_MESSAGING_SENDER_ID, FIREBASE_APP_ID,
- *   TELEGRAM_BOT_USERNAME
+ *   API_URL              → URL Cloudflare Tunnel backend (https://...)
+ *   TELEGRAM_BOT_USERNAME → Username bot Telegram tanpa @
  *
  * ── Env vars hanya di Vercel (server-side, JANGAN di .env lokal) ──────────
  *   BOT_TOKEN   → dipakai api/verify.js untuk verifikasi hash Telegram
@@ -55,12 +56,7 @@ let html = fs.readFileSync(SRC, "utf8");
 
 // ── Mapping placeholder → env var ─────────────────────────────────────────
 const replacements = {
-  "%%FIREBASE_API_KEY%%":             process.env.FIREBASE_API_KEY             || "",
-  "%%FIREBASE_AUTH_DOMAIN%%":         process.env.FIREBASE_AUTH_DOMAIN         || "",
-  "%%FIREBASE_PROJECT_ID%%":          process.env.FIREBASE_PROJECT_ID          || "",
-  "%%FIREBASE_STORAGE_BUCKET%%":      process.env.FIREBASE_STORAGE_BUCKET      || "",
-  "%%FIREBASE_MESSAGING_SENDER_ID%%": process.env.FIREBASE_MESSAGING_SENDER_ID || "",
-  "%%FIREBASE_APP_ID%%":              process.env.FIREBASE_APP_ID              || "",
+  "%%API_URL%%":                      process.env.API_URL                      || "",
   "%%TELEGRAM_BOT_USERNAME%%":        process.env.TELEGRAM_BOT_USERNAME        || "",
 };
 
@@ -72,9 +68,21 @@ const missing = Object.entries(replacements)
 if (missing.length > 0) {
   console.error("❌ BUILD FAILED — Missing environment variables:");
   missing.forEach(k => console.error(`   - ${k}`));
-  console.error("\n💡 Lokal: isi nilai di dashboard-vercel/.env");
+  console.error("\n💡 Lokal: isi nilai di .env");
   console.error("   Vercel: set di Project → Settings → Environment Variables");
   process.exit(1);
+}
+
+// ── Validasi Cloudflare Tunnel URL ────────────────────────────────────────
+const apiUrl = process.env.API_URL || "";
+if (apiUrl.startsWith("http://") && !apiUrl.includes("localhost") && !apiUrl.includes("127.0.0.1")) {
+  console.warn("⚠️  PERINGATAN: API_URL menggunakan HTTP (bukan HTTPS).");
+  console.warn("   Untuk production, gunakan Cloudflare Tunnel (HTTPS otomatis).");
+  console.warn("   Contoh: https://xxxx.trycloudflare.com\n");
+} else if (!apiUrl.startsWith("https://") && !apiUrl.includes("localhost") && !apiUrl.includes("127.0.0.1")) {
+  console.warn("⚠️  PERINGATAN: Format API_URL tidak dikenali. Pastikan format-nya:");
+  console.warn("   https://xxxx.trycloudflare.com  (Cloudflare Quick Tunnel)");
+  console.warn("   https://api.domainanda.com       (Cloudflare Named Tunnel + custom domain)\n");
 }
 
 // ── Ganti semua placeholder ────────────────────────────────────────────────
@@ -102,5 +110,6 @@ if (fs.existsSync(path.join(__dirname, "js")))  copyDir(path.join(__dirname, "js
 // ── Tulis hasil ────────────────────────────────────────────────────────────
 fs.writeFileSync(DIST, html, "utf8");
 console.log("✅ Build selesai → dist/index.html");
-console.log(`   Firebase Project  : ${process.env.FIREBASE_PROJECT_ID}`);
+console.log(`   API URL (Tunnel)  : ${process.env.API_URL}`);
 console.log(`   Telegram Bot      : @${process.env.TELEGRAM_BOT_USERNAME}`);
+console.log("\n📡 Pastikan Cloudflare Tunnel aktif di VPS sebelum membuka dashboard!");

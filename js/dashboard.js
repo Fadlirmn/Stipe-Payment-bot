@@ -9,65 +9,42 @@ let currentSection = 'overview';
 let ringChart, lineChart;
 let currentUrlFilter = '';
 
+function decodeToken(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
 function initAuth() {
-  firebase.auth().onAuthStateChanged(async (user) => {
-    if (user) {
-      showLoginLoading(true);
-      showLoginError('');
-      try {
-        const email = user.email.toLowerCase();
-        const userSnap = await db.collection('users').where('email', '==', email).get();
-        
-        if (userSnap.empty) {
-          showLoginError('🚫 Email Anda belum terdaftar di database bot. Hubungkan email di bot Telegram menggunakan /setemail.');
-          firebase.auth().signOut();
-          showLoginLoading(false);
-          showLoginScreen();
-          return;
-        }
-
-        const userData = userSnap.docs[0].data();
-
-        if (!userData.is_active) {
-          showLoginError('🚫 Akun Anda dinonaktifkan. Hubungi admin.');
-          firebase.auth().signOut();
-          showLoginLoading(false);
-          showLoginScreen();
-          return;
-        }
-
-        if (!['dev', 'admin', 'staff'].includes(userData.role)) {
-          showLoginError('🚫 Akses ditolak. Akun Anda masih pending atau belum diapprove.');
-          firebase.auth().signOut();
-          showLoginLoading(false);
-          showLoginScreen();
-          return;
-        }
-
-        currentUser = {
-          id:         userData.user_id,
-          first_name: userData.full_name || 'User',
-          last_name:  '',
-          username:   userData.username || '',
-          role:       userData.role,
-          email:      email
-        };
-
-        showLoginLoading(false);
-        await showDashboard();
-
-      } catch (err) {
-        console.error('Auth check error:', err);
-        showLoginError('❌ Gagal memeriksa data user: ' + err.message);
-        firebase.auth().signOut();
-        showLoginLoading(false);
-        showLoginScreen();
-      }
+  const token = localStorage.getItem('token');
+  if (token) {
+    const payload = decodeToken(token);
+    if (payload && payload.exp * 1000 > Date.now()) {
+      currentUser = {
+        id:         payload.user_id,
+        first_name: payload.full_name || 'User',
+        last_name:  '',
+        username:   payload.username || '',
+        role:       payload.role,
+        email:      payload.email
+      };
+      showDashboard();
     } else {
+      localStorage.removeItem('token');
       currentUser = null;
       showLoginScreen();
     }
-  });
+  } else {
+    currentUser = null;
+    showLoginScreen();
+  }
 }
 
 function showLoginScreen() {
@@ -96,18 +73,31 @@ async function handleSignIn(event) {
   showLoginLoading(true);
 
   try {
-    await firebase.auth().signInWithEmailAndPassword(email, password);
+    const res = await fetch(`${API_URL}/api/auth/signin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Gagal masuk.');
+    }
+    localStorage.setItem('token', data.token);
+    currentUser = {
+      id:         data.user.user_id,
+      first_name: data.user.full_name || 'User',
+      last_name:  '',
+      username:   data.user.username || '',
+      role:       data.user.role,
+      email:      data.user.email
+    };
+    showLoginLoading(false);
+    await showDashboard();
   } catch (err) {
     console.error('Sign in error:', err);
-    let friendlyMsg = '❌ Terjadi kesalahan login.';
-    if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-      friendlyMsg = '❌ Email atau password salah.';
-    } else if (err.code === 'auth/invalid-email') {
-      friendlyMsg = '❌ Format email tidak valid.';
-    } else {
-      friendlyMsg = `❌ Error: ${err.message}`;
-    }
-    showLoginError(friendlyMsg);
+    showLoginError(`❌ ${err.message}`);
     showLoginLoading(false);
   }
 }
@@ -133,37 +123,25 @@ async function handleSignUp(event) {
   showLoginLoading(true);
 
   try {
-    const emailLower = email.toLowerCase();
-    const userSnap = await db.collection('users').where('email', '==', emailLower).get();
-
-    if (userSnap.empty) {
-      showLoginError('🚫 Email Anda belum terdaftar di database bot. Silakan gunakan perintah /setemail <email> pada bot Telegram Anda terlebih dahulu.');
-      showLoginLoading(false);
-      return;
-    }
-
-    const userCred = await firebase.auth().createUserWithEmailAndPassword(email, password);
-    const docId = userSnap.docs[0].id;
-    await db.collection('users').doc(docId).update({
-      firebase_uid: userCred.user.uid
+    const res = await fetch(`${API_URL}/api/auth/signup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email, password })
     });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Gagal mendaftar.');
+    }
 
     document.getElementById('signup-form').reset();
     toggleAuthMode(null, 'signin');
     showLoginError('✅ Pendaftaran berhasil! Silakan masuk.');
     showLoginLoading(false);
-
   } catch (err) {
     console.error('Sign up error:', err);
-    let friendlyMsg = '❌ Gagal mendaftar.';
-    if (err.code === 'auth/email-already-in-use') {
-      friendlyMsg = '❌ Email sudah digunakan oleh akun lain.';
-    } else if (err.code === 'auth/invalid-email') {
-      friendlyMsg = '❌ Format email tidak valid.';
-    } else {
-      friendlyMsg = `❌ Error: ${err.message}`;
-    }
-    showLoginError(friendlyMsg);
+    showLoginError(`❌ ${err.message}`);
     showLoginLoading(false);
   }
 }
@@ -210,12 +188,9 @@ function showLoginLoading(on) {
   });
 }
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
-  try {
-    await firebase.auth().signOut();
-  } catch (err) {
-    console.error('Logout error:', err);
-  }
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem('token');
+  window.location.reload();
 });
 
 // ══════════════════════════════════════════════════════════
@@ -307,6 +282,7 @@ function loadSection(sec) {
   if (sec === 'taskuser')  initTaskUserSection();
   if (sec === 'urllog')    loadUrlLog(d);
   if (sec === 'analytics') loadAnalytics();
+  if (sec === 'taskmgmt' && currentUser?.role === 'dev') loadTaskMgmt();
   if (sec === 'usermgmt' && currentUser?.role === 'dev') loadUserMgmt('');
 }
 
@@ -314,20 +290,60 @@ function loadSection(sec) {
 // FIRESTORE HELPERS
 // ══════════════════════════════════════════════════════════
 async function countDocs(collectionPath, conditions = []) {
-  let q = db.collection(collectionPath);
-  for (const [field, op, val] of conditions) q = q.where(field, op, val);
-  const snap = await q.get();
-  return snap.size;
+  try {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/api/count`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ collectionPath, conditions })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        window.location.reload();
+      }
+      throw new Error(data.detail || 'Gagal menghitung dokumen.');
+    }
+    setStatus(true);
+    return data.count;
+  } catch (err) {
+    console.error('countDocs error:', err);
+    setStatus(false);
+    throw err;
+  }
 }
 
 async function getDocs(collectionPath, conditions = [], orderByField = null,
                         orderDir = 'desc', limitN = null) {
-  let q = db.collection(collectionPath);
-  for (const [field, op, val] of conditions) q = q.where(field, op, val);
-  if (orderByField) q = q.orderBy(orderByField, orderDir);
-  if (limitN)       q = q.limit(limitN);
-  const snap = await q.get();
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  try {
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/api/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ collectionPath, conditions, orderByField, orderDir, limitN })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        window.location.reload();
+      }
+      throw new Error(data.detail || 'Gagal mengambil dokumen.');
+    }
+    setStatus(true);
+    return data.results;
+  } catch (err) {
+    console.error('getDocs error:', err);
+    setStatus(false);
+    throw err;
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -793,14 +809,29 @@ async function saveEditUser() {
   msgEl.textContent = '⏳ Menyimpan...';
 
   try {
-    const snap = await db.collection('users')
-      .where('user_id', '==', parseInt(_editUserId)).limit(1).get();
-    if (snap.empty) {
+    const users = await getDocs('users', [['user_id', '==', parseInt(_editUserId)]], null, 'desc', 1);
+    if (users.length === 0) {
       msgEl.style.color = '#ef4444';
       msgEl.textContent = '❌ User tidak ditemukan.';
       return;
     }
-    await snap.docs[0].ref.update({ role: newRole, is_active: isActive });
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API_URL}/api/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        collectionPath: 'users',
+        docId: _editUserId.toString(),
+        updateData: { role: newRole, is_active: isActive }
+      })
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.detail || 'Gagal menyimpan.');
+    }
     msgEl.style.color = '#22c55e';
     msgEl.textContent = '✅ Berhasil disimpan!';
     setTimeout(() => {
@@ -819,7 +850,168 @@ document.getElementById('edit-user-modal').addEventListener('click', function(e)
   if (e.target === this) closeEditModal();
 });
 
+// ══════════════════════════════════════════════════════════
+// TASK MANAGEMENT (dev only)
+// ══════════════════════════════════════════════════════════
+let _editTaskId = null; // null = create mode, string = edit mode
+
+async function loadTaskMgmt() {
+  const tbody = document.getElementById('taskmgmt-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="loading-row">⏳ Memuat task...</td></tr>';
+  try {
+    const tasks = await getDocs('tasks');
+    if (!tasks.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="loading-row">📫 Belum ada task. Klik "Buat Task Baru".</td></tr>';
+      return;
+    }
+    tbody.innerHTML = tasks.map(t => {
+      const deadline = t.deadline ? t.deadline.slice(0, 16).replace('T', ' ') + ' WIB' : '—';
+      const repeatLabel = { none: '—', daily: '🔄 Daily', weekly: '🗓️ Weekly' }[t.repeat_type] || (t.repeat_type || '—');
+      const pauseOrResume = t.status === 'paused'
+        ? `<button class="btn-action resume" onclick="quickSetTaskStatus('${t.task_id}','active')">▶ Resume</button>`
+        : t.status === 'active'
+          ? `<button class="btn-action pause" onclick="quickSetTaskStatus('${t.task_id}','paused')">⏸ Pause</button>`
+          : '';
+      return `<tr>
+        <td><code>${esc(t.task_id)}</code></td>
+        <td><strong>${esc(t.title)}</strong>${t.description ? `<br><small style="color:var(--text-secondary)">${esc(t.description)}</small>` : ''}</td>
+        <td>${esc(t.sheet_tab || '-')}</td>
+        <td>${t.quota_total || '—'}</td>
+        <td style="white-space:nowrap">${deadline}</td>
+        <td>${repeatLabel}</td>
+        <td><span class="badge ${statusBadge(t.status)}">${t.status}</span></td>
+        <td>
+          <div class="action-group">
+            <button class="btn-action edit" onclick="openTaskModal('${t.task_id}')">✏️ Edit</button>
+            ${pauseOrResume}
+            ${t.status !== 'archived' ? `<button class="btn-action archive" onclick="quickSetTaskStatus('${t.task_id}','archived')">🗃 Arsip</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    console.error('TaskMgmt load error:', err);
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-row">⚠️ Gagal memuat task</td></tr>';
+  }
+}
+
+async function openTaskModal(taskId = null) {
+  _editTaskId = taskId;
+  const titleEl    = document.getElementById('task-modal-title');
+  const subtitleEl = document.getElementById('task-modal-subtitle');
+  const msgEl      = document.getElementById('task-modal-msg');
+  msgEl.textContent = '';
+
+  if (taskId) {
+    titleEl.textContent    = '✏️ Edit Task';
+    subtitleEl.textContent = 'ID: ' + taskId;
+    try {
+      const tasks = await getDocs('tasks', [['task_id', '==', taskId]], null, 'desc', 1);
+      const t = tasks[0] || {};
+      document.getElementById('tm-title').value     = t.title || '';
+      document.getElementById('tm-sheet-tab').value = t.sheet_tab || '';
+      document.getElementById('tm-quota').value      = t.quota_total || '';
+      document.getElementById('tm-deadline').value   = t.deadline ? t.deadline.slice(0, 16) : '';
+      document.getElementById('tm-repeat').value     = t.repeat_type || 'none';
+      document.getElementById('tm-status').value     = t.status || 'active';
+      document.getElementById('tm-desc').value       = t.description || '';
+    } catch (e) {
+      console.error('openTaskModal fetch error:', e);
+    }
+  } else {
+    titleEl.textContent    = '➕ Buat Task Baru';
+    subtitleEl.textContent = 'Task baru akan langsung aktif setelah disimpan.';
+    document.getElementById('tm-title').value     = '';
+    document.getElementById('tm-sheet-tab').value = '';
+    document.getElementById('tm-quota').value      = '';
+    document.getElementById('tm-deadline').value   = '';
+    document.getElementById('tm-repeat').value     = 'none';
+    document.getElementById('tm-status').value     = 'active';
+    document.getElementById('tm-desc').value       = '';
+  }
+  document.getElementById('task-modal').style.display = 'flex';
+}
+
+function closeTaskModal() {
+  document.getElementById('task-modal').style.display = 'none';
+  _editTaskId = null;
+}
+
+async function saveTask() {
+  const msgEl = document.getElementById('task-modal-msg');
+  const title = document.getElementById('tm-title').value.trim();
+  if (!title) {
+    msgEl.style.color = '#ef4444';
+    msgEl.textContent = '❌ Judul task tidak boleh kosong.';
+    return;
+  }
+  msgEl.style.color = '#94a3b8';
+  msgEl.textContent = '⏳ Menyimpan...';
+
+  const payload = {
+    title,
+    sheet_tab:   document.getElementById('tm-sheet-tab').value.trim(),
+    quota_total: parseInt(document.getElementById('tm-quota').value) || 0,
+    deadline:    document.getElementById('tm-deadline').value || null,
+    repeat_type: document.getElementById('tm-repeat').value,
+    status:      document.getElementById('tm-status').value,
+    description: document.getElementById('tm-desc').value.trim() || null,
+  };
+
+  try {
+    const token = localStorage.getItem('token');
+    let res;
+    if (_editTaskId) {
+      // UPDATE existing task
+      res = await fetch(`${API_URL}/api/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ collectionPath: 'tasks', docId: _editTaskId, updateData: payload })
+      });
+    } else {
+      // CREATE new task
+      res = await fetch(`${API_URL}/api/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+    }
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.detail || 'Gagal menyimpan task.');
+    }
+    msgEl.style.color = '#22c55e';
+    msgEl.textContent = '✅ Berhasil disimpan!';
+    setTimeout(() => { closeTaskModal(); loadTaskMgmt(); }, 800);
+  } catch (err) {
+    console.error('saveTask error:', err);
+    msgEl.style.color = '#ef4444';
+    msgEl.textContent = '❌ ' + err.message;
+  }
+}
+
+async function quickSetTaskStatus(taskId, newStatus) {
+  const token = localStorage.getItem('token');
+  try {
+    const res = await fetch(`${API_URL}/api/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ collectionPath: 'tasks', docId: taskId, updateData: { status: newStatus } })
+    });
+    if (!res.ok) throw new Error('Gagal update status.');
+    loadTaskMgmt();
+  } catch (err) {
+    console.error('quickSetTaskStatus error:', err);
+    alert('⚠️ Gagal mengubah status task: ' + err.message);
+  }
+}
+
+document.getElementById('task-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeTaskModal();
+});
+
 // ── Helpers ─────────────────────────────────────────────────
+
 function esc(str) {
   return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
