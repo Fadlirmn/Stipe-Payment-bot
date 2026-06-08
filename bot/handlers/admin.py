@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, CommandHandler, CallbackQueryHandler,
     ConversationHandler, MessageHandler, filters
@@ -18,6 +18,9 @@ from bot.utils.formatters import role_badge, progress_bar, now_wib
 from bot.config import TZ, DEV_IDS, DASHBOARD_URL
 
 (CT_TITLE, CT_DESC, CT_TAB, CT_QUOTA_TOTAL, CT_QUOTA_STAFF, CT_DEADLINE, CT_REPEAT) = range(7)
+
+# Edit task conversation states
+(ET_FIELD, ET_VALUE) = range(7, 9)
 
 
 @require_role("admin", "dev")
@@ -343,10 +346,247 @@ async def ct_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ── Task Management ──────────────────────────────────────
+@require_role("admin", "dev")
+async def cmd_list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tampilkan daftar semua task dengan tombol aksi."""
+    tasks = await fdb.list_tasks(status=None)  # semua status
+    if not tasks:
+        await update.effective_message.reply_text(
+            "📭 Belum ada task.", reply_markup=back_keyboard()
+        )
+        return
+
+    lines = ["📋 *MANAGE TASKS*\n━━━━━━━━━━━━━━━━━━━━"]
+    buttons = []
+    for t in tasks:
+        status_icon = "🟢" if t["status"] == "active" else "🔴" if t["status"] == "paused" else "⚫"
+        lines.append(f"\n{status_icon} `{t['task_id']}`\n   {t['title'][:40]}")
+        buttons.append([
+            InlineKeyboardButton(
+                f"{status_icon} {t['title'][:28]}",
+                callback_data=f"task:detail:{t['task_id']}"
+            )
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("➕ Buat Task Baru", callback_data="menu:config_task"),
+    ])
+    buttons.append([InlineKeyboardButton("🔙 Kembali", callback_data="menu:main")])
+
+    await update.effective_message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def cb_task_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tampilkan detail task + tombol edit/pause/delete."""
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    task = await fdb.get_task(task_id)
+    if not task:
+        await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
+        return
+
+    today = datetime.now(TZ).date().isoformat()
+    total = await fdb.count_sheet_urls(task_id, today)
+    done  = await fdb.count_sheet_urls(task_id, today, status="OK")
+    status_icon = "🟢 Aktif" if task["status"] == "active" else "🔴 Paused" if task["status"] == "paused" else "⚫ Selesai"
+
+    text = (
+        f"📌 *DETAIL TASK*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"ID       : `{task['task_id']}`\n"
+        f"Judul    : {task['title']}\n"
+        f"Deskripsi: {task.get('description') or '—'}\n"
+        f"Sheet Tab: {task.get('sheet_tab') or '—'}\n"
+        f"Quota    : {task.get('quota_total', 0)} total / {task.get('quota_per_staff', 0)} per staff\n"
+        f"Deadline : {(task.get('deadline') or '—')[:16].replace('T',' ')}\n"
+        f"Repeat   : {task.get('repeat_type', '—')}\n"
+        f"Status   : {status_icon}\n"
+        f"Progress : {done}/{total} URL hari ini"
+    )
+
+    pause_label = "⏸️ Pause" if task["status"] == "active" else "▶️ Aktifkan"
+    pause_cb    = f"task:pause:{task_id}" if task["status"] == "active" else f"task:activate:{task_id}"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✏️ Edit", callback_data=f"task:edit:{task_id}"),
+            InlineKeyboardButton(pause_label, callback_data=pause_cb),
+        ],
+        [
+            InlineKeyboardButton("🗑️ Hapus Task", callback_data=f"task:delete_confirm:{task_id}"),
+        ],
+        [InlineKeyboardButton("🔙 Daftar Task", callback_data="menu:manage_tasks")],
+    ])
+    await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def cb_task_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    actor = await get_or_create_user(update)
+    await fdb.update_task(task_id, status="paused")
+    await fdb.add_audit_log(actor["user_id"], "task.pause", "task", task_id, {})
+    await update.callback_query.message.reply_text(
+        f"⏸️ Task `{task_id}` dijeda.",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard("menu:manage_tasks")
+    )
+
+
+async def cb_task_activate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    actor = await get_or_create_user(update)
+    await fdb.update_task(task_id, status="active")
+    await fdb.add_audit_log(actor["user_id"], "task.activate", "task", task_id, {})
+    await update.callback_query.message.reply_text(
+        f"▶️ Task `{task_id}` diaktifkan kembali.",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard("menu:manage_tasks")
+    )
+
+
+async def cb_task_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    context.user_data["delete_task_id"] = task_id
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Ya, Hapus!", callback_data=f"task:delete_do:{task_id}"),
+        InlineKeyboardButton("❌ Batal", callback_data=f"task:detail:{task_id}"),
+    ]])
+    await update.callback_query.message.reply_text(
+        f"⚠️ *Yakin ingin menghapus task* `{task_id}`?\n"
+        "Data URL yang terkait task ini *tidak* akan dihapus.",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+
+
+async def cb_task_delete_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    actor = await get_or_create_user(update)
+    await fdb.update_task(task_id, status="deleted")
+    await fdb.add_audit_log(actor["user_id"], "task.delete", "task", task_id, {})
+    await update.callback_query.message.reply_text(
+        f"🗑️ Task `{task_id}` telah dihapus (status: deleted).",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard("menu:manage_tasks")
+    )
+
+
+async def cb_task_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mulai flow edit task — pilih field yang ingin diubah."""
+    await update.callback_query.answer()
+    task_id = update.callback_query.data.split(":", 2)[2]
+    context.user_data["edit_task_id"] = task_id
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Judul",       callback_data="taskedit:title"),
+         InlineKeyboardButton("📄 Deskripsi",   callback_data="taskedit:description")],
+        [InlineKeyboardButton("📊 Sheet Tab",   callback_data="taskedit:sheet_tab"),
+         InlineKeyboardButton("🔁 Repeat Type", callback_data="taskedit:repeat_type")],
+        [InlineKeyboardButton("🎯 Quota Total", callback_data="taskedit:quota_total"),
+         InlineKeyboardButton("👤 Quota Staff", callback_data="taskedit:quota_per_staff")],
+        [InlineKeyboardButton("⏰ Deadline",    callback_data="taskedit:deadline")],
+        [InlineKeyboardButton("❌ Batal",        callback_data=f"task:detail:{task_id}")],
+    ])
+    await update.callback_query.message.reply_text(
+        f"✏️ *Edit Task* `{task_id}`\n\nPilih field yang ingin diubah:",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    return ET_FIELD
+
+
+async def cb_taskedit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    field = update.callback_query.data.split(":")[1]
+    context.user_data["edit_task_field"] = field
+
+    labels = {
+        "title": "Judul baru",
+        "description": "Deskripsi baru (atau `-` untuk kosong)",
+        "sheet_tab": "Nama tab Google Sheet baru",
+        "repeat_type": "Repeat type baru (`daily` / `weekly` / `once`)",
+        "quota_total": "Kuota total URL baru (angka)",
+        "quota_per_staff": "Kuota per staff baru (angka)",
+        "deadline": "Deadline baru (format: `HH:MM`) atau `-` untuk hapus",
+    }
+    await update.callback_query.message.reply_text(
+        f"✏️ {labels.get(field, field)}:",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard(f"task:edit:{context.user_data.get('edit_task_id', '')}")
+    )
+    return ET_VALUE
+
+
+async def et_get_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    field   = context.user_data.get("edit_task_field")
+    task_id = context.user_data.get("edit_task_id")
+    raw     = update.message.text.strip()
+    actor   = await get_or_create_user(update)
+
+    if not field or not task_id:
+        await update.message.reply_text("❌ Sesi edit berakhir, mulai ulang.")
+        return ConversationHandler.END
+
+    # Konversi nilai berdasarkan tipe field
+    if field in ("quota_total", "quota_per_staff"):
+        try:
+            value = int(raw)
+        except ValueError:
+            await update.message.reply_text("❌ Masukkan angka."); return ET_VALUE
+    elif field == "repeat_type":
+        if raw.lower() not in ("daily", "weekly", "once"):
+            await update.message.reply_text("❌ Pilih: daily | weekly | once"); return ET_VALUE
+        value = raw.lower()
+    elif field == "deadline":
+        if raw == "-":
+            value = None
+        else:
+            try:
+                today = datetime.now(TZ).date()
+                hhmm  = datetime.strptime(raw, "%H:%M").time()
+                value = datetime.combine(today, hhmm).replace(tzinfo=TZ).isoformat()
+            except ValueError:
+                await update.message.reply_text("❌ Format salah, gunakan HH:MM."); return ET_VALUE
+    elif field == "description" and raw == "-":
+        value = ""
+    else:
+        value = raw
+
+    await fdb.update_task(task_id, **{field: value})
+    await fdb.add_audit_log(actor["user_id"], "task.edit", "task", task_id, {"field": field, "value": str(value)})
+
+    await update.message.reply_text(
+        f"✅ Task `{task_id}` berhasil diupdate!\n`{field}` → `{value}`",
+        parse_mode="Markdown",
+        reply_markup=back_keyboard("menu:manage_tasks")
+    )
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def et_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("❌ Edit task dibatalkan.", reply_markup=back_keyboard("menu:manage_tasks"))
+    return ConversationHandler.END
+
+
 # Callbacks
 async def cb_menu_config_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     return await cmd_config_task(update, context)
+
+
+async def cb_menu_manage_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await cmd_list_tasks(update, context)
 
 
 async def cb_menu_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -369,9 +609,15 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/approve <user_id>` — Approve pendaftaran manual\n"
         "• `/setrole <user_id> <role>` — Ubah role user\n"
         "• `/broadcast <pesan>` — Kirim pesan broadcast ke semua staff\n"
+        "• `/tasks` — Manage semua task\n"
+        "• `/backup` — Backup data ke SQLite lokal\n"
     )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Manage Tasks", callback_data="menu:manage_tasks")],
+        [InlineKeyboardButton("🔙 Kembali", callback_data="menu:main")],
+    ])
     await update.callback_query.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=back_keyboard()
+        text, parse_mode="Markdown", reply_markup=kb
     )
 
 
@@ -446,20 +692,41 @@ def get_handlers():
         fallbacks=[CommandHandler("cancel", ct_cancel)],
         allow_reentry=True,
     )
+
+    edit_task_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(cb_task_edit, pattern="^task:edit:"),
+        ],
+        states={
+            ET_FIELD: [CallbackQueryHandler(cb_taskedit_field, pattern="^taskedit:")],
+            ET_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, et_get_value)],
+        },
+        fallbacks=[CommandHandler("cancel", et_cancel)],
+        allow_reentry=True,
+    )
+
     return [
         config_conv,
-        CommandHandler("approve",   cmd_approve),
-        CommandHandler("unban",     cmd_unban),
-        CommandHandler("setrole",   cmd_setrole),
-        CommandHandler("users",     cmd_users),
-        CommandHandler("report",    cmd_report),
-        CommandHandler("broadcast", cmd_broadcast),
-        CommandHandler("backup",    cmd_backup),
-        CommandHandler("restore",   cmd_restore),
-        CallbackQueryHandler(cb_menu_report, pattern="^menu:report$"),
-        CallbackQueryHandler(cb_menu_users,  pattern="^menu:users$"),
-        CallbackQueryHandler(cb_menu_devtools,  pattern="^menu:devtools$"),
-        CallbackQueryHandler(cb_menu_dashboard, pattern="^menu:dashboard$"),
-        CallbackQueryHandler(cb_menu_reminder,  pattern="^menu:reminder$"),
+        edit_task_conv,
+        CommandHandler("approve",       cmd_approve),
+        CommandHandler("unban",         cmd_unban),
+        CommandHandler("setrole",       cmd_setrole),
+        CommandHandler("users",         cmd_users),
+        CommandHandler("report",        cmd_report),
+        CommandHandler("broadcast",     cmd_broadcast),
+        CommandHandler("backup",        cmd_backup),
+        CommandHandler("restore",       cmd_restore),
+        CommandHandler("tasks",         cmd_list_tasks),
+        CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
+        CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),
+        CallbackQueryHandler(cb_menu_devtools,      pattern="^menu:devtools$"),
+        CallbackQueryHandler(cb_menu_dashboard,     pattern="^menu:dashboard$"),
+        CallbackQueryHandler(cb_menu_reminder,      pattern="^menu:reminder$"),
+        CallbackQueryHandler(cb_menu_manage_tasks,  pattern="^menu:manage_tasks$"),
+        CallbackQueryHandler(cb_task_detail,        pattern="^task:detail:"),
+        CallbackQueryHandler(cb_task_pause,         pattern="^task:pause:"),
+        CallbackQueryHandler(cb_task_activate,      pattern="^task:activate:"),
+        CallbackQueryHandler(cb_task_delete_confirm,pattern="^task:delete_confirm:"),
+        CallbackQueryHandler(cb_task_delete_do,     pattern="^task:delete_do:"),
     ]
 
