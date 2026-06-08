@@ -341,6 +341,7 @@ Sistem sudah otomatis kirim pengingat tanpa kamu atur manual:
 | **Tombol ❌ Tolak** di notifikasi | Tolak pendaftaran anggota baru |
 | `/report` | Lihat laporan harian tim |
 | `/dashboard` | Dapatkan link Web Dashboard |
+| `/backup` | Mencadangkan seluruh data Firestore ke SQLite lokal (`data/backup.db`) |
 | `/cancel` | Batalkan apapun yang sedang diisi |
 
 ---

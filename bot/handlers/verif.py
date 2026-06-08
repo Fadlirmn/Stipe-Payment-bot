@@ -101,6 +101,7 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, str | None]:
     from datetime import date
+    import hashlib
     tab = task.get("sheet_tab", "Sheet1")
     try:
         rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
@@ -108,14 +109,30 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
         logger.error(f"[Sync] Error fetching URLs for task {task['task_id']}: {exc}")
         return 0, str(exc)
 
+    if not rows:
+        return 0, None
+
+    # Fetch all existing doc IDs for this task and date to check in memory
+    try:
+        docs = await fdb.sheet_urls_col().where("task_id", "==", task["task_id"]).where("date", "==", target_date).select([]).get()
+        existing_ids = {d.id for d in docs}
+    except Exception as e:
+        logger.warning(f"[Sync] Failed to fetch existing doc IDs: {e}. Falling back to individual check.")
+        existing_ids = None
+
     count = 0
     for row in rows:
+        doc_id = hashlib.md5(f"{task['task_id']}_{row['payment_url']}".encode("utf-8")).hexdigest()
+        if existing_ids is not None and doc_id in existing_ids:
+            continue
+
         await fdb.add_sheet_url(
             task_id=task["task_id"],
             date=target_date,
             account=row["account"],
             payment_url=row["payment_url"],
             notes=row["notes"],
+            check_exists=(existing_ids is None),
         )
         # Tandai sebagai ASSIGNED di Google Sheet
         await update_sheet_status(row["payment_url"], "ASSIGNED", tab_name=tab)

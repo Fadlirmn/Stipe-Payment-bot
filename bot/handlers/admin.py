@@ -403,6 +403,17 @@ async def cb_menu_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@require_role("admin", "dev")
+async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ *Memulai proses SQLite backup lokal...*", parse_mode="Markdown")
+    from bot.backup import backup_firestore_to_sqlite
+    success, msg = await backup_firestore_to_sqlite()
+    if success:
+        await update.message.reply_text(f"✅ *Backup Berhasil!*\n\n`{msg}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ *Backup Gagal!*\n\n`{msg}`", parse_mode="Markdown")
+
+
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -429,6 +440,7 @@ def get_handlers():
         CommandHandler("users",     cmd_users),
         CommandHandler("report",    cmd_report),
         CommandHandler("broadcast", cmd_broadcast),
+        CommandHandler("backup",    cmd_backup),
         CallbackQueryHandler(cb_menu_report, pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,  pattern="^menu:users$"),
         CallbackQueryHandler(cb_menu_devtools,  pattern="^menu:devtools$"),

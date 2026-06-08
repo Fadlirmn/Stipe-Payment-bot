@@ -14,12 +14,17 @@ from __future__ import annotations
 import firebase_admin
 from firebase_admin import credentials, firestore
 from loguru import logger
+import time
 
 import warnings
 # Abaikan warning deprecation dari Firestore SDK agar log tidak penuh spam
 warnings.filterwarnings("ignore", category=UserWarning, message="Detected filter using positional arguments.*")
 
 from bot.config import FIREBASE_CREDENTIALS_JSON, FIREBASE_PROJECT_ID
+
+# ── User Cache ────────────────────────────────────────────
+_user_cache: dict[int, tuple[dict | None, float]] = {}
+USER_CACHE_TTL = 120.0  # 2 minutes cache duration
 
 # ── Init Firebase (singleton) ─────────────────────────────
 _app = None
@@ -66,8 +71,16 @@ def audit_col():       return db().collection("audit_logs")
 # USER HELPERS
 # ══════════════════════════════════════════════════════════
 async def get_user(user_id: int) -> dict | None:
+    now = time.time()
+    if user_id in _user_cache:
+        data, expiry = _user_cache[user_id]
+        if now < expiry:
+            return data
+
     doc = await users_col().document(str(user_id)).get()
-    return doc.to_dict() if doc.exists else None
+    user_data = doc.to_dict() if doc.exists else None
+    _user_cache[user_id] = (user_data, now + USER_CACHE_TTL)
+    return user_data
 
 
 async def create_user(user_id: int, username: str, full_name: str, role: str = "pending") -> dict:
@@ -83,11 +96,14 @@ async def create_user(user_id: int, username: str, full_name: str, role: str = "
         "approved_by": None,
     }
     await users_col().document(str(user_id)).set(data)
+    _user_cache[user_id] = (data, time.time() + USER_CACHE_TTL)
     return data
 
 
 async def update_user(user_id: int, **kwargs):
     await users_col().document(str(user_id)).update(kwargs)
+    if user_id in _user_cache:
+        del _user_cache[user_id]
 
 
 async def list_users(role: str | None = None) -> list[dict]:
@@ -98,12 +114,24 @@ async def list_users(role: str | None = None) -> list[dict]:
     return [d.to_dict() for d in docs]
 
 
+# ── Task Cache ────────────────────────────────────────────
+_task_cache: dict[str, tuple[dict | None, float]] = {}
+TASK_CACHE_TTL = 300.0  # 5 minutes cache duration
+
 # ══════════════════════════════════════════════════════════
 # TASK HELPERS
 # ══════════════════════════════════════════════════════════
 async def get_task(task_id: str) -> dict | None:
+    now = time.time()
+    if task_id in _task_cache:
+        data, expiry = _task_cache[task_id]
+        if now < expiry:
+            return data
+
     doc = await tasks_col().document(task_id).get()
-    return doc.to_dict() if doc.exists else None
+    task_data = doc.to_dict() if doc.exists else None
+    _task_cache[task_id] = (task_data, now + TASK_CACHE_TTL)
+    return task_data
 
 
 async def create_task(task_data: dict) -> dict:
@@ -111,11 +139,14 @@ async def create_task(task_data: dict) -> dict:
     from bot.config import TZ
     task_data["created_at"] = datetime.now(TZ).isoformat()
     await tasks_col().document(task_data["task_id"]).set(task_data)
+    _task_cache[task_data["task_id"]] = (task_data, time.time() + TASK_CACHE_TTL)
     return task_data
 
 
 async def update_task(task_id: str, **kwargs):
     await tasks_col().document(task_id).update(kwargs)
+    if task_id in _task_cache:
+        del _task_cache[task_id]
 
 
 async def list_tasks(status: str | None = "active") -> list[dict]:
@@ -130,7 +161,7 @@ async def list_tasks(status: str | None = "active") -> list[dict]:
 # SHEET URL HELPERS
 # ══════════════════════════════════════════════════════════
 async def add_sheet_url(task_id: str, date: str, account: str,
-                         payment_url: str, notes: str) -> str:
+                         payment_url: str, notes: str, check_exists: bool = True) -> str:
     """Tambah URL ke Firestore. Return doc_id."""
     from datetime import datetime
     import hashlib
@@ -140,10 +171,11 @@ async def add_sheet_url(task_id: str, date: str, account: str,
     doc_id = hashlib.md5(f"{task_id}_{payment_url}".encode("utf-8")).hexdigest()
     ref = sheet_urls_col().document(doc_id)
 
-    doc_snap = await ref.get()
-    if doc_snap.exists:
-        # Jika sudah ada, jangan timpa datanya untuk mencegah hilangnya status verifikasi jika disinkronkan ulang
-        return doc_id
+    if check_exists:
+        doc_snap = await ref.get()
+        if doc_snap.exists:
+            # Jika sudah ada, jangan timpa datanya untuk mencegah hilangnya status verifikasi jika disinkronkan ulang
+            return doc_id
 
     data = {
         "task_id":     task_id,
@@ -176,14 +208,16 @@ async def update_sheet_url(doc_id: str, **kwargs):
 
 
 async def count_sheet_urls(task_id: str, date: str,
-                            status: str | None = None) -> int:
+                             status: str | None = None) -> int:
     q = (sheet_urls_col()
          .where("task_id", "==", task_id)
          .where("date", "==", date))
     if status:
         q = q.where("status", "==", status)
-    docs = await q.get()
-    return len(docs)
+    
+    count_query = q.count()
+    res = await count_query.get()
+    return int(res[0].value) if res else 0
 
 
 async def get_next_pending_url(task_id: str, date: str) -> dict | None:
@@ -310,21 +344,23 @@ async def list_sheet_urls(task_id: str | None = None, date: str | None = None,
     if date:    q = q.where("date", "==", date)
     if status:  q = q.where("status", "==", status)
 
-    # Ambil semua tanpa order_by di query agar tidak memerlukan composite index di Firestore
-    all_docs = await q.get()
+    # 1. Hitung total secara efisien menggunakan count() query server-side
+    count_query = q.count()
+    count_snap = await count_query.get()
+    total = int(count_snap[0].value) if count_snap else 0
+
+    # 2. Ambil hanya sesuai limit dan offset di query database untuk menghemat quota read
+    # Kita tidak menggunakan order_by di query agar tidak membutuhkan composite index tambahan di Firestore
+    query_with_limit = q.limit(limit).offset(offset)
+    docs = await query_with_limit.get()
     
     docs_data = []
-    for d in all_docs:
+    for d in docs:
         item = d.to_dict()
         item["id"] = d.id
         docs_data.append(item)
         
-    # Urutkan secara manual di memori (created_at DESC)
-    docs_data.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    total = len(docs_data)
-    sliced = docs_data[offset: offset + limit]
-    return sliced, total
+    return docs_data, total
 
 
 # ══════════════════════════════════════════════════════════

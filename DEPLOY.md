@@ -463,8 +463,11 @@ docker compose logs --tail=100 bot
 
 ### Backup
 
-Data tersimpan di Firebase Firestore — tidak perlu backup manual di VPS.
-- Firestore → ⋮ → **Export data** → simpan ke Google Cloud Storage
+Sistem dilengkapi dengan fitur pencadangan otomatis (backup) dari Firestore Cloud ke database SQLite lokal di VPS:
+- **Lokasi Backup:** file database disimpan di host VPS pada direktori `./data/backup.db` (melalui volume mount `./data:/app/data` di Docker Compose).
+- **Backup Otomatis:** Berjalan otomatis setiap 3 jam via scheduler.
+- **Backup Manual:** Dev atau Admin dapat memicu pencadangan instan kapan saja dengan mengirimkan perintah `/backup` ke bot Telegram.
+- **Backup Cloud (Opsional):** Firestore → ⋮ → **Export data** → simpan ke Google Cloud Storage.
 
 ---
 

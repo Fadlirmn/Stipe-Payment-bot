@@ -76,6 +76,16 @@ async def job_sync_spreadsheets(app):
         logger.error(f"[Scheduler] Auto-sync job error: {e}")
 
 
+async def job_local_backup(app):
+    logger.info("[Scheduler] Starting local SQLite backup...")
+    from bot.backup import backup_firestore_to_sqlite
+    success, msg = await backup_firestore_to_sqlite()
+    if success:
+        logger.info(f"[Scheduler] Backup success: {msg}")
+    else:
+        logger.error(f"[Scheduler] Backup failed: {msg}")
+
+
 def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=str(TZ))
 
@@ -95,5 +105,13 @@ def setup_scheduler(app) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m)")
+    scheduler.add_job(
+        job_local_backup,
+        CronTrigger(hour="*/3", timezone=TZ),
+        args=[app],
+        id="local_backup",
+        replace_existing=True,
+    )
+
+    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m), local_backup (every 3h)")
     return scheduler
