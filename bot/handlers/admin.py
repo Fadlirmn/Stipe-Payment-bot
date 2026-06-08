@@ -414,6 +414,20 @@ async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ *Backup Gagal!*\n\n`{msg}`", parse_mode="Markdown")
 
 
+@require_role("admin", "dev")
+async def cmd_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ *Memulai proses sinkronisasi dari SQLite lokal ke Firestore Cloud...*", parse_mode="Markdown")
+    from bot.backup import restore_sqlite_to_firestore
+    success, msg = await restore_sqlite_to_firestore()
+    if success:
+        # Reset fallback flag so the bot switches back to using Firestore for subsequent operations
+        import bot.firebase_db as fdb
+        fdb._use_local_sqlite = False
+        await update.message.reply_text(f"✅ *Restore/Sync Berhasil!*\n\n`{msg}`\n\nBot kembali menggunakan Firestore Cloud.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text(f"❌ *Restore/Sync Gagal!*\n\n`{msg}`", parse_mode="Markdown")
+
+
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -441,6 +455,7 @@ def get_handlers():
         CommandHandler("report",    cmd_report),
         CommandHandler("broadcast", cmd_broadcast),
         CommandHandler("backup",    cmd_backup),
+        CommandHandler("restore",   cmd_restore),
         CallbackQueryHandler(cb_menu_report, pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,  pattern="^menu:users$"),
         CallbackQueryHandler(cb_menu_devtools,  pattern="^menu:devtools$"),

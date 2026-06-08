@@ -342,6 +342,7 @@ Sistem sudah otomatis kirim pengingat tanpa kamu atur manual:
 | `/report` | Lihat laporan harian tim |
 | `/dashboard` | Dapatkan link Web Dashboard |
 | `/backup` | Mencadangkan seluruh data Firestore ke SQLite lokal (`data/backup.db`) |
+| `/restore` | Mengunggah kembali data dari SQLite lokal ke Firestore Cloud (sinkronisasi balik) |
 | `/cancel` | Batalkan apapun yang sedang diisi |
 
 ---
