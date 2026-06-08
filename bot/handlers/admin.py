@@ -397,6 +397,10 @@ async def cb_task_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tampilkan detail task + tombol edit/pause/delete."""
     await update.callback_query.answer()
     task_id = update.callback_query.data.split(":", 2)[2]
+    await _show_task_detail_menu(update, context, task_id)
+
+
+async def _show_task_detail_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, task_id: str):
     task = await fdb.get_task(task_id)
     if not task:
         await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
@@ -468,8 +472,7 @@ async def cb_task_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
     # Tampilkan kembali detail task yang ter-update
-    update.callback_query.data = f"task:detail:{task_id}"
-    await cb_task_detail(update, context)
+    await _show_task_detail_menu(update, context, task_id)
 
 
 async def cb_task_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
