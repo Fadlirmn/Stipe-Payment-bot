@@ -34,8 +34,8 @@ async def update_task(task_id: str, **kwargs):
 async def list_tasks(status: str | None = "active") -> list[dict]:
     return await asyncio.to_thread(pgdb.postgres_list_tasks, status)
 
-async def add_sheet_url(task_id: str, date: str, account: str, payment_url: str, notes: str, check_exists: bool = True) -> str:
-    return await asyncio.to_thread(pgdb.postgres_add_sheet_url, task_id, date, account, payment_url, notes, check_exists)
+async def add_sheet_url(task_id: str, date: str, account: str, payment_url: str, notes: str, api_key: str = "", check_exists: bool = True) -> str:
+    return await asyncio.to_thread(pgdb.postgres_add_sheet_url, task_id, date, account, payment_url, notes, api_key, check_exists)
 
 async def get_sheet_url(doc_id: str) -> dict | None:
     return await asyncio.to_thread(pgdb.postgres_get_sheet_url, doc_id)

@@ -106,3 +106,28 @@ async def verify_url(url: str) -> VerifResult:
     except Exception as exc:
         logger.error(f"[Verifier] Error: {exc} | URL={url}")
         return VerifResult(VerifStatus.HTTP_ERR, None, str(exc), url)
+
+
+async def check_leonardo_api_key(api_key: str) -> str:
+    """
+    Verifikasi keaktifan API Key Leonardo.ai secara async.
+    """
+    if not api_key:
+        return ""
+    url = "https://cloud.leonardo.ai/api/rest/v1/me"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code == 200:
+                return "ACTIVE"
+            elif r.status_code == 401:
+                return "EXPIRED"
+            else:
+                return f"FAILED (HTTP {r.status_code})"
+    except Exception as e:
+        logger.error(f"[Verifier] API Key Check Error: {e}")
+        return f"FAILED (Error: {str(e)})"

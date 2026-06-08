@@ -53,6 +53,8 @@ def sqlite_init_db():
         task_id TEXT,
         date TEXT,
         account TEXT,
+        api_key TEXT,
+        api_key_status TEXT,
         payment_url TEXT,
         notes TEXT,
         status TEXT DEFAULT 'PENDING',
@@ -63,6 +65,16 @@ def sqlite_init_db():
         created_at TEXT,
         assigned_at TEXT
     )""")
+
+    # Upgrade existing database if columns are missing
+    try:
+        cursor.execute("ALTER TABLE sheet_urls ADD COLUMN api_key TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sheet_urls ADD COLUMN api_key_status TEXT")
+    except Exception:
+        pass
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS task_progress (
         id TEXT PRIMARY KEY,
@@ -243,7 +255,7 @@ def sqlite_list_tasks(status: str | None = "active") -> list[dict]:
 
 
 def sqlite_add_sheet_url(task_id: str, date: str, account: str,
-                         payment_url: str, notes: str, check_exists: bool = True) -> str:
+                         payment_url: str, notes: str, api_key: str = "", check_exists: bool = True) -> str:
     from bot.config import TZ
     import hashlib
     doc_id = hashlib.md5(f"{task_id}_{payment_url}".encode("utf-8")).hexdigest()
@@ -259,10 +271,10 @@ def sqlite_add_sheet_url(task_id: str, date: str, account: str,
             return doc_id
 
     cursor.execute("""
-    INSERT OR REPLACE INTO sheet_urls (id, task_id, date, account, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO sheet_urls (id, task_id, date, account, api_key, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        doc_id, task_id, date, account, payment_url, notes, "PENDING", None, None, None, None, created_at, None
+        doc_id, task_id, date, account, api_key, payment_url, notes, "PENDING", None, None, None, None, created_at, None
     ))
     conn.commit()
     conn.close()

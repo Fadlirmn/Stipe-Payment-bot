@@ -79,6 +79,7 @@ async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date]
             continue
         results.append({
             "account":     str(item.get("account", "")).strip(),
+            "api_key":     str(item.get("api_key", "")).strip(),
             "payment_url": url,
             "notes":       str(item.get("notes", "")).strip(),
         })

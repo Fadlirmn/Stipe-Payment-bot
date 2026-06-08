@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
-from bot.services.url_verifier import verify_url
+from bot.services.url_verifier import verify_url, check_leonardo_api_key
 from bot.utils.keyboards import task_list_keyboard, url_action_keyboard, back_keyboard
 from bot.utils.formatters import progress_bar, now_wib, status_badge
 from bot.config import TZ
@@ -125,6 +125,7 @@ async def _sync_sheet_to_firebase(task: dict, target_date: str) -> tuple[int, st
             account=row["account"],
             payment_url=row["payment_url"],
             notes=row["notes"],
+            api_key=row.get("api_key", ""),
             check_exists=(existing_ids is None),
         )
         count += 1
@@ -238,16 +239,24 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payment_url = url_obj["payment_url"]
     task_id     = url_obj["task_id"]
     today       = url_obj["date"]
+    api_key     = url_obj.get("api_key", "")
 
     result = await verify_url(payment_url)
+    
+    api_key_status = None
+    if api_key:
+        api_key_status = await check_leonardo_api_key(api_key)
 
-    await fdb.update_sheet_url(doc_id,
-        status=result.status.value,
-        http_code=result.http_code,
-        error_msg=result.message if not result.is_ok else None,
-        verified_by=user["user_id"],
-        verified_at=now_wib().isoformat(),
-    )
+    db_update = {
+        "status": result.status.value,
+        "http_code": result.http_code,
+        "error_msg": result.message if not result.is_ok else None,
+        "verified_by": user["user_id"],
+        "verified_at": now_wib().isoformat(),
+    }
+    if api_key:
+        db_update["api_key_status"] = api_key_status
+    await fdb.update_sheet_url(doc_id, **db_update)
 
     # Update status ke Google Sheet
     username = user.get("username")
@@ -281,12 +290,19 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "http_code": result.http_code},
     )
 
+    api_info_str = ""
+    if api_key:
+        masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+        api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+
     await update.callback_query.message.reply_text(
         f"{result.emoji} *Hasil Verifikasi*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Status : {status_badge(result.status.value)}\n"
         f"HTTP   : {result.http_code or '-'}\n"
         f"Pesan  : {result.message}\n"
+        f"{api_info_str}"
         f"URL    : `{payment_url[:60]}...`",
         parse_mode="Markdown",
     )
@@ -601,32 +617,24 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     payment_url = url_obj["payment_url"]
     task_id     = url_obj["task_id"]
     today       = url_obj["date"]
+    api_key     = url_obj.get("api_key", "")
 
     result = await verify_url(payment_url)
+    
+    api_key_status = None
+    if api_key:
+        api_key_status = await check_leonardo_api_key(api_key)
 
-    await fdb.update_sheet_url(doc_id,
-        status=result.status.value,
-        http_code=result.http_code,
-        error_msg=result.message if not result.is_ok else None,
-        verified_by=user["user_id"],
-        verified_at=now_wib().isoformat(),
-    )
-
-    # Update status ke Google Sheet
-    username = user.get("username")
-    full_name = user.get("full_name")
-    staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
-    task = await fdb.get_task(task_id)
-    tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-    try:
-        await update_sheet_status(
-            payment_url,
-            result.status.value,
-            tab_name=tab,
-            staff_info=staff_str
-        )
-    except Exception as e:
-        logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_detail: {e}")
+    db_update = {
+        "status": result.status.value,
+        "http_code": result.http_code,
+        "error_msg": result.message if not result.is_ok else None,
+        "verified_by": user["user_id"],
+        "verified_at": now_wib().isoformat(),
+    }
+    if api_key:
+        db_update["api_key_status"] = api_key_status
+    await fdb.update_sheet_url(doc_id, **db_update)
 
     await fdb.upsert_progress(
         task_id=task_id, user_id=user["user_id"], date=today,
@@ -642,12 +650,19 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
                 "http_code": result.http_code},
     )
 
+    api_info_str = ""
+    if api_key:
+        masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+        api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+
     await update.callback_query.message.reply_text(
         f"{result.emoji} *Hasil Verifikasi*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Status : {status_badge(result.status.value)}\n"
         f"HTTP   : {result.http_code or '-'}\n"
-        f"Pesan  : {result.message}",
+        f"Pesan  : {result.message}\n"
+        f"{api_info_str}",
         parse_mode="Markdown",
     )
     
@@ -668,22 +683,6 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
             verified_by=user["user_id"],
             verified_at=now_wib().isoformat(),
         )
-
-        # Update status ke Google Sheet
-        username = user.get("username")
-        full_name = user.get("full_name")
-        staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
-        task = await fdb.get_task(url_obj["task_id"])
-        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-        try:
-            await update_sheet_status(
-                url_obj["payment_url"],
-                "SKIPPED",
-                tab_name=tab,
-                staff_info=staff_str
-            )
-        except Exception as e:
-            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk skip_detail: {e}")
         
         await _show_url_list(update, context, url_obj["task_id"], url_obj["date"], page)
 
@@ -738,7 +737,6 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    sem = asyncio.Semaphore(5)
     async def verify_and_update(url_obj):
         doc_id = url_obj["id"]
         payment_url = url_obj["payment_url"]
@@ -754,43 +752,35 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Failed to mark as processing {doc_id}: {e}")
             return None
             
-        async with sem:
-            # 2. Verifikasi URL
-            result = await verify_url(payment_url)
+        # 2. Verifikasi URL
+        result = await verify_url(payment_url)
+        
+        api_key = url_obj.get("api_key", "")
+        api_key_status = None
+        if api_key:
+            api_key_status = await check_leonardo_api_key(api_key)
             
-            # 3. Update status verifikasi di DB
-            await fdb.update_sheet_url(doc_id,
-                status=result.status.value,
-                http_code=result.http_code,
-                error_msg=result.message if not result.is_ok else None,
-                verified_by=user["user_id"],
-                verified_at=now_wib().isoformat(),
-            )
-            
-            # 4. Update status ke Google Sheet
-            username = user.get("username")
-            full_name = user.get("full_name")
-            staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
-            tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-            try:
-                await update_sheet_status(
-                    payment_url,
-                    result.status.value,
-                    tab_name=tab,
-                    staff_info=staff_str
-                )
-            except Exception as e:
-                logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_all: {e}")
-            
-            # 5. Catat audit log
-            await fdb.add_audit_log(
-                actor_id=user["user_id"], action="url.verify",
-                target_type="sheet_url", target_id=doc_id,
-                detail={"url": payment_url, "status": result.status.value,
-                        "http_code": result.http_code},
-            )
-            
-            return result
+        # 3. Update status verifikasi di DB
+        db_update = {
+            "status": result.status.value,
+            "http_code": result.http_code,
+            "error_msg": result.message if not result.is_ok else None,
+            "verified_by": user["user_id"],
+            "verified_at": now_wib().isoformat(),
+        }
+        if api_key:
+            db_update["api_key_status"] = api_key_status
+        await fdb.update_sheet_url(doc_id, **db_update)
+        
+        # 4. Catat audit log
+        await fdb.add_audit_log(
+            actor_id=user["user_id"], action="url.verify",
+            target_type="sheet_url", target_id=doc_id,
+            detail={"url": payment_url, "status": result.status.value,
+                    "http_code": result.http_code},
+        )
+        
+        return result
 
     tasks_to_run = [verify_and_update(u) for u in urls_to_verify]
     results = await asyncio.gather(*tasks_to_run)

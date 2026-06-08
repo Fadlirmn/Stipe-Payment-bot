@@ -61,6 +61,7 @@ function doGet(e) {
 
       results.push({
         account:     email,
+        api_key:     String(row[COL_API_KEY]     || "").trim(),
         payment_url: rawUrl,
         notes:       "",
         row_index:   i + 1  // 1-based, berguna jika bot perlu update status nanti
@@ -153,7 +154,7 @@ function doPost(e) {
         break;
       }
     }
-
+hanisms at play. The g
     if (!exists) {
       targetSheet.appendRow([data.api_key, data.email, data.username, data.tokens, data.renewal_date, new Date(), data.used_status || "", data.active_status || "", data.check_keys_timestamp || ""]);
       if (data.active_status) {
@@ -232,9 +233,9 @@ function parseDateValue(val) {
   var s = String(val).trim();
   var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
-  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
   if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
-  m = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  m = s.match(/^(\d{2})-(\d{2})-(\d{4})/);
   if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
   return null;
 }
