@@ -218,8 +218,32 @@ function doPost(e) {
   else {
     // Default: append baris baru
     var sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
-    sheet.appendRow([data.email, data.password, data.api_key, data.stripe_url, new Date()]);
-    return jsonOut({ status: "success" });
+    var range = sheet.getDataRange();
+    var values = range.getValues();
+    var foundIndex = -1;
+
+    for (var i = 0; i < values.length; i++) {
+      var sheetUrl = String(values[i][COL_URL] || "").trim();
+      var sheetEmail = String(values[i][COL_EMAIL] || "").trim();
+      if ((data.stripe_url && sheetUrl === String(data.stripe_url).trim()) || 
+          (data.email && sheetEmail === String(data.email).trim())) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    if (foundIndex !== -1) {
+      // Update data yang sudah ada (misal API key baru)
+      if (data.api_key) {
+        sheet.getRange(foundIndex + 1, COL_API_KEY + 1).setValue(data.api_key);
+      }
+      sheet.getRange(foundIndex + 1, COL_TIMESTAMP + 1).setValue(new Date());
+      return jsonOut({ status: "updated", row: foundIndex + 1 });
+    } else {
+      // Append baris baru jika benar-benar baru
+      sheet.appendRow([data.email, data.password, data.api_key, data.stripe_url, new Date()]);
+      return jsonOut({ status: "success" });
+    }
   }
 }
 
