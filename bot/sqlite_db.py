@@ -377,13 +377,32 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         conn.close()
         return row_to_claim, []
 
-    # 3. Cari block 20 PENDING yang belum di-assign ke siapa-siapa (verified_by IS NULL atau '')
+    # 3. Cari block PENDING yang belum di-assign ke siapa-siapa (verified_by IS NULL atau '')
+    # Batasi block size berdasarkan quota per staff
+    cursor.execute("SELECT quota_per_staff FROM tasks WHERE task_id = ?", (task_id,))
+    task_row = cursor.fetchone()
+    quota_staff = task_row["quota_per_staff"] if task_row else 0
+
+    block_size = 20
+    if quota_staff > 0:
+        cursor.execute("""
+        SELECT submitted FROM task_progress
+        WHERE id = ?
+        """, (f"{task_id}_{user_id}_{date_str}",))
+        prog_row = cursor.fetchone()
+        submitted = prog_row["submitted"] if prog_row else 0
+        remaining_quota = max(0, quota_staff - submitted)
+        if remaining_quota <= 0:
+            conn.close()
+            return None, []
+        block_size = min(20, remaining_quota)
+
     cursor.execute("""
     SELECT * FROM sheet_urls
     WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
     ORDER BY created_at ASC, id ASC
-    LIMIT 20
-    """, (task_id, date_str))
+    LIMIT ?
+    """, (task_id, date_str, block_size))
     rows = cursor.fetchall()
 
     if rows:
@@ -395,7 +414,7 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         WHERE id = ?
         """, (user_id_str, now.isoformat(), first_row["id"]))
 
-        # Sisa baris (2 s.d. 20) kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
+        # Sisa baris kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
         for r in rows[1:]:
             cursor.execute("""
             UPDATE sheet_urls
