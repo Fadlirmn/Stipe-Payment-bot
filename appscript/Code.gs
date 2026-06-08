@@ -280,3 +280,52 @@ function jsonOut(obj) {
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+/**
+ * Fungsi sekali pakai (One-time run) untuk membersihkan semua baris duplikat di Google Sheet.
+ * Jalankan fungsi ini langsung dari editor Apps Script.
+ */
+function cleanDuplicates() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+  var range = sheet.getDataRange();
+  var values = range.getValues();
+  
+  if (values.length <= 1) {
+    Logger.log("Sheet kosong atau hanya berisi header.");
+    return;
+  }
+  
+  var header = values[0];
+  var uniqueRows = [];
+  var seenUrls = {};
+  var seenEmails = {};
+  
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var email = String(row[COL_EMAIL] || "").trim();
+    var url = String(row[COL_URL] || "").trim();
+    
+    // Jika url atau email sudah terdaftar sebelumnya, anggap sebagai duplikat
+    if ((url && seenUrls[url]) || (email && seenEmails[email])) {
+      continue;
+    }
+    
+    if (url) seenUrls[url] = true;
+    if (email) seenEmails[email] = true;
+    uniqueRows.push(row);
+  }
+  
+  // Bersihkan data lama, lalu tulis ulang data unik
+  sheet.clearContents();
+  
+  // Tulis kembali header
+  sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  
+  // Tulis kembali data unik jika ada
+  if (uniqueRows.length > 0) {
+    sheet.getRange(2, 1, uniqueRows.length, header.length).setValues(uniqueRows);
+  }
+  
+  Logger.log("✅ Pembersihan selesai! Data unik tersisa: " + uniqueRows.length + " baris.");
+}
