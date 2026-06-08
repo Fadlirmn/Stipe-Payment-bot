@@ -612,6 +612,22 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         verified_at=now_wib().isoformat(),
     )
 
+    # Update status ke Google Sheet
+    username = user.get("username")
+    full_name = user.get("full_name")
+    staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+    task = await fdb.get_task(task_id)
+    tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+    try:
+        await update_sheet_status(
+            payment_url,
+            result.status.value,
+            tab_name=tab,
+            staff_info=staff_str
+        )
+    except Exception as e:
+        logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_detail: {e}")
+
     await fdb.upsert_progress(
         task_id=task_id, user_id=user["user_id"], date=today,
         submitted_delta=1,
@@ -652,6 +668,22 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
             verified_by=user["user_id"],
             verified_at=now_wib().isoformat(),
         )
+
+        # Update status ke Google Sheet
+        username = user.get("username")
+        full_name = user.get("full_name")
+        staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+        task = await fdb.get_task(url_obj["task_id"])
+        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+        try:
+            await update_sheet_status(
+                url_obj["payment_url"],
+                "SKIPPED",
+                tab_name=tab,
+                staff_info=staff_str
+            )
+        except Exception as e:
+            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk skip_detail: {e}")
         
         await _show_url_list(update, context, url_obj["task_id"], url_obj["date"], page)
 
@@ -706,6 +738,7 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+    sem = asyncio.Semaphore(5)
     async def verify_and_update(url_obj):
         doc_id = url_obj["id"]
         payment_url = url_obj["payment_url"]
@@ -721,27 +754,43 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Failed to mark as processing {doc_id}: {e}")
             return None
             
-        # 2. Verifikasi URL
-        result = await verify_url(payment_url)
-        
-        # 3. Update status verifikasi di DB
-        await fdb.update_sheet_url(doc_id,
-            status=result.status.value,
-            http_code=result.http_code,
-            error_msg=result.message if not result.is_ok else None,
-            verified_by=user["user_id"],
-            verified_at=now_wib().isoformat(),
-        )
-        
-        # 4. Catat audit log
-        await fdb.add_audit_log(
-            actor_id=user["user_id"], action="url.verify",
-            target_type="sheet_url", target_id=doc_id,
-            detail={"url": payment_url, "status": result.status.value,
-                    "http_code": result.http_code},
-        )
-        
-        return result
+        async with sem:
+            # 2. Verifikasi URL
+            result = await verify_url(payment_url)
+            
+            # 3. Update status verifikasi di DB
+            await fdb.update_sheet_url(doc_id,
+                status=result.status.value,
+                http_code=result.http_code,
+                error_msg=result.message if not result.is_ok else None,
+                verified_by=user["user_id"],
+                verified_at=now_wib().isoformat(),
+            )
+            
+            # 4. Update status ke Google Sheet
+            username = user.get("username")
+            full_name = user.get("full_name")
+            staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+            tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+            try:
+                await update_sheet_status(
+                    payment_url,
+                    result.status.value,
+                    tab_name=tab,
+                    staff_info=staff_str
+                )
+            except Exception as e:
+                logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_all: {e}")
+            
+            # 5. Catat audit log
+            await fdb.add_audit_log(
+                actor_id=user["user_id"], action="url.verify",
+                target_type="sheet_url", target_id=doc_id,
+                detail={"url": payment_url, "status": result.status.value,
+                        "http_code": result.http_code},
+            )
+            
+            return result
 
     tasks_to_run = [verify_and_update(u) for u in urls_to_verify]
     results = await asyncio.gather(*tasks_to_run)
