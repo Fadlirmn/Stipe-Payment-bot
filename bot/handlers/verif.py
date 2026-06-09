@@ -179,8 +179,8 @@ async def _show_next_pending_url(
                 except Exception as e:
                     logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk {u['payment_url']}: {e}")
 
-        # Jalankan update secara paralel
-        await asyncio.gather(*(safe_update(u) for u in claimed_urls), return_exceptions=True)
+        # Jalankan update secara paralel di background (non-blocking)
+        asyncio.create_task(asyncio.gather(*(safe_update(u) for u in claimed_urls), return_exceptions=True))
 
     if not url_obj:
         total   = await fdb.count_sheet_urls(task_id, today)
@@ -278,21 +278,24 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_update["api_key_status"] = api_key_status
     await fdb.update_sheet_url(doc_id, **db_update)
 
-    # Update status ke Google Sheet
+    # Update status ke Google Sheet (non-blocking background task)
     username = user.get("username")
     full_name = user.get("full_name")
     staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
     task = await fdb.get_task(task_id)
     tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-    try:
-        await update_sheet_status(
-            payment_url,
-            result.status.value,
-            tab_name=tab,
-            staff_info=staff_str
-        )
-    except Exception as e:
-        logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify: {e}")
+    
+    async def bg_update_verify():
+        try:
+            await update_sheet_status(
+                payment_url,
+                result.status.value,
+                tab_name=tab,
+                staff_info=staff_str
+            )
+        except Exception as e:
+            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify: {e}")
+    asyncio.create_task(bg_update_verify())
 
     # Progress tetap dicatat di database untuk ditampilkan di dashboard/laporan
 
@@ -342,21 +345,24 @@ async def cb_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             verified_at=now_wib().isoformat(),
         )
 
-        # Update status ke Google Sheet
+        # Update status ke Google Sheet (non-blocking background task)
         username = user.get("username")
         full_name = user.get("full_name")
         staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
         task = await fdb.get_task(url_obj["task_id"])
         tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-        try:
-            await update_sheet_status(
-                url_obj["payment_url"],
-                "SKIPPED",
-                tab_name=tab,
-                staff_info=staff_str
-            )
-        except Exception as e:
-            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk skip: {e}")
+        
+        async def bg_update_skip():
+            try:
+                await update_sheet_status(
+                    url_obj["payment_url"],
+                    "SKIPPED",
+                    tab_name=tab,
+                    staff_info=staff_str
+                )
+            except Exception as e:
+                logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk skip: {e}")
+        asyncio.create_task(bg_update_skip())
 
         await _show_next_pending_url(
             update, context, url_obj["task_id"], user["user_id"], url_obj["date"]

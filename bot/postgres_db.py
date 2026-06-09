@@ -112,6 +112,11 @@ def postgres_init_db():
         timestamp TEXT
     )""")
     
+    # 6. Indexes for query and claim performance optimization
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_task_date_status ON sheet_urls (task_id, date, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_verified_by ON sheet_urls (verified_by)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_url ON sheet_urls (payment_url)")
+    
     conn.commit()
     cursor.close()
     conn.close()
