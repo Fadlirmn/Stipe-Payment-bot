@@ -843,27 +843,33 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # Ambil semua URL PENDING untuk hari ini (staff hanya memproses yang ditugaskan ke mereka)
+    # Ambil semua URL PENDING dan PROCESSING untuk hari ini
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
         verified_by_filter = str(user["user_id"])
-    pending_urls, total_pending = await fdb.list_sheet_urls(
+    
+    pending_urls, _ = await fdb.list_sheet_urls(
         task_id=task_id, date=today, status="PENDING", limit=500, verified_by=verified_by_filter
     )
+    processing_urls, _ = await fdb.list_sheet_urls(
+        task_id=task_id, date=today, status="PROCESSING", limit=500, verified_by=verified_by_filter
+    )
+    
+    urls_to_verify_all = processing_urls + pending_urls
 
-    if not pending_urls:
+    if not urls_to_verify_all:
         await update.callback_query.message.reply_text(
-            "📭 Tidak ada URL PENDING yang perlu diverifikasi.",
+            "📭 Tidak ada URL PENDING atau PROCESSING yang perlu diverifikasi.",
             reply_markup=back_keyboard()
         )
         return
 
     # Batasi dengan remaining_quota
-    urls_to_verify = pending_urls[:remaining_quota]
+    urls_to_verify = urls_to_verify_all[:remaining_quota]
     
     # Beri tahu user bahwa proses sedang berjalan
     progress_msg = await update.callback_query.message.reply_text(
-        f"⏳ Memproses verifikasi *{len(urls_to_verify)}* URL PENDING secara massal...",
+        f"⏳ Memproses verifikasi *{len(urls_to_verify)}* URL secara massal...",
         parse_mode="Markdown"
     )
 
@@ -909,6 +915,21 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             detail={"url": payment_url, "status": result.status.value,
                     "http_code": result.http_code},
         )
+        
+        # 5. Update status ke Google Sheet (non-blocking background task)
+        staff_str = f"@{user.get('username')}" if user.get('username') else (user.get('full_name') if user.get('full_name') else str(user["user_id"]))
+        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+        async def bg_update_sheet_bulk():
+            try:
+                await update_sheet_status(
+                    payment_url,
+                    result.status.value,
+                    tab_name=tab,
+                    staff_info=staff_str
+                )
+            except Exception as e:
+                logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_all: {e}")
+        asyncio.create_task(bg_update_sheet_bulk())
         
         return result
 
