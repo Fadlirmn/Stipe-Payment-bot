@@ -27,7 +27,7 @@ def get_pg_connection():
         cursor_factory=RealDictCursor
     )
 
-async def backup_postgres_to_sqlite(db_path: str = "data/backup.db") -> tuple[bool, str]:
+def backup_postgres_to_sqlite(db_path: str = "data/backup.db") -> tuple[bool, str]:
     """
     Membaca seluruh data dari PostgreSQL dan menyimpannya ke database SQLite lokal.
     """
@@ -195,7 +195,7 @@ async def backup_postgres_to_sqlite(db_path: str = "data/backup.db") -> tuple[bo
         logger.error(f"[Backup] {err_msg}")
         return False, err_msg
 
-async def restore_sqlite_to_postgres(db_path: str = "data/backup.db") -> tuple[bool, str]:
+def restore_sqlite_to_postgres(db_path: str = "data/backup.db") -> tuple[bool, str]:
     """
     Membaca seluruh data dari database SQLite lokal dan memulihkannya ke PostgreSQL.
     """

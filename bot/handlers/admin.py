@@ -731,7 +731,7 @@ async def cb_menu_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ *Memulai proses SQLite backup lokal dari PostgreSQL...*", parse_mode="Markdown")
     from bot.backup import backup_postgres_to_sqlite
-    success, msg = await backup_postgres_to_sqlite()
+    success, msg = await asyncio.to_thread(backup_postgres_to_sqlite)
     if success:
         await update.message.reply_text(f"✅ *Backup Berhasil!*\n\n`{msg}`", parse_mode="Markdown")
     else:
@@ -742,7 +742,7 @@ async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ *Memulai proses pemulihan dari SQLite lokal ke PostgreSQL...*", parse_mode="Markdown")
     from bot.backup import restore_sqlite_to_postgres
-    success, msg = await restore_sqlite_to_postgres()
+    success, msg = await asyncio.to_thread(restore_sqlite_to_postgres)
     if success:
         await update.message.reply_text(f"✅ *Restore Berhasil!*\n\n`{msg}`", parse_mode="Markdown")
     else:

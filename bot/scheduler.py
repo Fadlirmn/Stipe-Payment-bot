@@ -3,6 +3,7 @@ scheduler.py — APScheduler jobs (PostgreSQL version)
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -79,7 +80,7 @@ async def job_sync_spreadsheets(app):
 async def job_local_backup():
     logger.info("[Scheduler] Starting periodic SQLite backup from PostgreSQL...")
     from bot.backup import backup_postgres_to_sqlite
-    success, msg = await backup_postgres_to_sqlite()
+    success, msg = await asyncio.to_thread(backup_postgres_to_sqlite)
     if success:
         logger.info(f"[Scheduler] {msg}")
     else:
