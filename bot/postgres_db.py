@@ -480,6 +480,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     WHERE task_id = %s AND date = %s AND status = 'PENDING' AND verified_by = %s
     ORDER BY created_at ASC, id ASC
     LIMIT 1
+    FOR UPDATE
     """, (task_id, date_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
@@ -524,6 +525,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
     ORDER BY created_at ASC, id ASC
     LIMIT %s
+    FOR UPDATE SKIP LOCKED
     """, (task_id, date_str, block_size))
     rows = cursor.fetchall()
 
@@ -560,6 +562,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     WHERE task_id = %s AND date = %s AND status = 'PROCESSING' AND assigned_at < %s
     ORDER BY created_at ASC, id ASC
     LIMIT 1
+    FOR UPDATE SKIP LOCKED
     """, (task_id, date_str, five_min_ago))
     row_to_claim = cursor.fetchone()
 
