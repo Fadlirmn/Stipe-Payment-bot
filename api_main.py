@@ -70,8 +70,72 @@ def dict_clean(d):
             pass
     return res
 
+# Initialize PostgreSQL Connection Pool globally if enabled
+connection_pool = None
+if USE_POSTGRES:
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from psycopg2.pool import ThreadedConnectionPool
+        
+        min_conn = int(os.getenv("PG_POOL_MIN", "5"))
+        max_conn = int(os.getenv("PG_POOL_MAX", "50"))
+        
+        connection_pool = ThreadedConnectionPool(
+            minconn=min_conn,
+            maxconn=max_conn,
+            host=os.getenv("POSTGRES_HOST", "localhost"),
+            port=int(os.getenv("POSTGRES_PORT", "5432")),
+            database=os.getenv("POSTGRES_DB", "stripe_verif"),
+            user=os.getenv("POSTGRES_USER", "postgres"),
+            password=os.getenv("POSTGRES_PASSWORD", "postgres"),
+            cursor_factory=RealDictCursor
+        )
+        logger.info(f"[FastAPI] PostgreSQL Threaded Connection Pool initialized with {min_conn}-{max_conn} connections.")
+    except Exception as e:
+        logger.error(f"[FastAPI] Failed to initialize PostgreSQL Threaded Connection Pool: {e}")
+
+class PooledConnectionWrapper:
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+        
+    def commit(self):
+        return self._conn.commit()
+        
+    def rollback(self):
+        return self._conn.rollback()
+        
+    def close(self):
+        if self._pool and self._conn:
+            try:
+                self._pool.putconn(self._conn)
+            except Exception as e:
+                logger.warning(f"[FastAPI] Failed to return connection to pool: {e}")
+            self._conn = None
+            self._pool = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
 def get_db_connection():
     if USE_POSTGRES:
+        if connection_pool:
+            try:
+                conn = connection_pool.getconn()
+                return PooledConnectionWrapper(conn, connection_pool)
+            except Exception as e:
+                logger.warning(f"[FastAPI] Connection pool exhausted or failed, falling back to new connection: {e}")
+                
         import psycopg2
         from psycopg2.extras import RealDictCursor
         conn = psycopg2.connect(

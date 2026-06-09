@@ -5,6 +5,7 @@ import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 from datetime import datetime
 from loguru import logger
 
@@ -117,7 +118,66 @@ def postgres_init_db():
     logger.info("[PostgreSQL] Database initialized/verified.")
 
 
+class PooledConnectionWrapper:
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+        
+    def commit(self):
+        return self._conn.commit()
+        
+    def rollback(self):
+        return self._conn.rollback()
+        
+    def close(self):
+        if self._pool and self._conn:
+            try:
+                self._pool.putconn(self._conn)
+            except Exception as e:
+                logger.warning(f"[PostgreSQL] Failed to return connection to pool: {e}")
+            self._conn = None
+            self._pool = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+# Initialize PostgreSQL Connection Pool globally
+connection_pool = None
+try:
+    min_conn = int(os.getenv("PG_POOL_MIN", "5"))
+    max_conn = int(os.getenv("PG_POOL_MAX", "50"))
+    connection_pool = ThreadedConnectionPool(
+        minconn=min_conn,
+        maxconn=max_conn,
+        host=PG_HOST,
+        port=PG_PORT,
+        database=PG_DB,
+        user=PG_USER,
+        password=PG_PWD,
+        cursor_factory=RealDictCursor
+    )
+    logger.info(f"[PostgreSQL] Threaded Connection Pool initialized with {min_conn}-{max_conn} connections.")
+except Exception as e:
+    logger.error(f"[PostgreSQL] Failed to initialize Threaded Connection Pool: {e}")
+
 def get_connection():
+    if connection_pool:
+        try:
+            conn = connection_pool.getconn()
+            return PooledConnectionWrapper(conn, connection_pool)
+        except Exception as e:
+            logger.warning(f"[PostgreSQL] Connection pool exhausted or failed, falling back to new connection: {e}")
+            
+    # Fallback to direct connection if pool fails
     conn = psycopg2.connect(
         host=PG_HOST,
         port=PG_PORT,
