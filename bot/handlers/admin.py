@@ -710,25 +710,137 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "🔧 *DEV TOOLS*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Gunakan perintah berikut secara langsung di chat:\n\n"
-        "• `/users` — Daftar & kelola semua user\n"
-        "• `/approve <user_id>` — Approve pendaftaran manual\n"
-        "• `/setrole <user_id> <role>` — Ubah role user\n"
-        "• `/broadcast <pesan>` — Kirim pesan broadcast ke semua staff\n"
-        "• `/tasks` — Manage semua task\n"
-        "• `/backup` — Backup data PostgreSQL ke SQLite lokal\n"
-        "• `/restore` — Restore data SQLite lokal ke PostgreSQL\n"
-        "• `/reset_today` — Hapus data URL & progress hari ini (Postgres)\n"
-        "• `/retry_failed` — Reset status URL gagal/timeout hari ini ke PENDING\n"
-        "• `/verify_failed` — Verifikasi ulang otomatis semua URL gagal/timeout (lintas waktu)\n"
+        "Pilih aksi dari menu di bawah:"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Manage Tasks", callback_data="menu:manage_tasks")],
-        [InlineKeyboardButton("🔙 Kembali", callback_data="menu:main")],
+        # ── User Management ──────────────────────────────────
+        [InlineKeyboardButton("👥 Daftar User",          callback_data="dev:users"),
+         InlineKeyboardButton("📢 Broadcast",            callback_data="dev:broadcast_prompt")],
+        # ── Task & URL ───────────────────────────────────────
+        [InlineKeyboardButton("📋 Manage Tasks",         callback_data="menu:manage_tasks")],
+        [InlineKeyboardButton("🔄 Sync Sheet → DB",      callback_data="dev:sync"),
+         InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
+        [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
+         InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
+        [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],
+        # ── Backup ───────────────────────────────────────────
+        [InlineKeyboardButton("💾 Backup → SQLite",      callback_data="dev:backup"),
+         InlineKeyboardButton("♻️ Restore SQLite → DB",  callback_data="dev:restore")],
+        # ── Nav ──────────────────────────────────────────────
+        [InlineKeyboardButton("📊 Dashboard",            callback_data="menu:dashboard")],
+        [InlineKeyboardButton("🔙 Kembali",              callback_data="menu:main")],
     ])
-    await update.callback_query.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=kb
-    )
+    try:
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+# ── Dev action callbacks ─────────────────────────────────────────────────────
+
+async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
+    """Dispatcher: jalankan perintah dev via tombol inline."""
+    await update.callback_query.answer(f"⏳ Memproses {action}...")
+    msg = update.callback_query.message
+
+    if action == "users":
+        # Simulasikan /users
+        fake = type("U", (), {"message": msg, "effective_user": update.effective_user})()
+        fake.message = type("M", (), {
+            "reply_text": msg.reply_text,
+            "from_user": update.effective_user,
+        })()
+        context._fake_update = True
+        await cmd_users(update, context)
+
+    elif action == "sync":
+        await msg.reply_text("⏳ *Sync Sheet → DB dimulai...*", parse_mode="Markdown")
+        from bot.handlers.verif import _sync_sheet_to_db
+        from datetime import datetime as _dt
+        today = _dt.now(TZ).date().isoformat()
+        all_tasks = await fdb.list_tasks()
+        results = []
+        for t in all_tasks:
+            count, err = await _sync_sheet_to_db(t, today)
+            results.append(f"• `{t['id'][:20]}`: +{count} URL" + (f" ⚠️{err}" if err else ""))
+        await msg.reply_text(
+            "✅ *Sync Selesai!*\n" + "\n".join(results) if results else "ℹ️ Tidak ada task aktif.",
+            parse_mode="Markdown"
+        )
+
+    elif action == "push_assignments":
+        # Jalankan langsung logic push_assignments
+        class _FakeUpdate:
+            callback_query = None
+            effective_user = update.effective_user
+            class message:
+                @staticmethod
+                async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
+        await cmd_push_assignments(_FakeUpdate(), context)
+
+    elif action == "retry_failed":
+        await msg.reply_text("⏳ *Me-reset URL gagal ke PENDING...*", parse_mode="Markdown")
+        from datetime import datetime as _dt
+        today = _dt.now(TZ).date().isoformat()
+        count = await fdb.retry_failed_urls(today)
+        await msg.reply_text(
+            f"✅ `{count}` URL di-reset ke PENDING." if count else "ℹ️ Tidak ada URL gagal hari ini.",
+            parse_mode="Markdown"
+        )
+
+    elif action == "verify_failed":
+        class _FakeUpdate:
+            callback_query = None
+            effective_user = update.effective_user
+            class message:
+                @staticmethod
+                async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
+        await cmd_verify_failed(_FakeUpdate(), context)
+
+    elif action == "reset_today":
+        confirm_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Ya, Reset!", callback_data="dev:reset_today_confirm"),
+            InlineKeyboardButton("❌ Batal",      callback_data="menu:devtools"),
+        ]])
+        await msg.reply_text(
+            "⚠️ *Yakin hapus semua data URL & progress hari ini?*\n"
+            "Tindakan ini tidak bisa dibatalkan!",
+            parse_mode="Markdown", reply_markup=confirm_kb
+        )
+
+    elif action == "reset_today_confirm":
+        from datetime import datetime as _dt
+        today = _dt.now(TZ).date().isoformat()
+        urls_del, prog_del = await fdb.reset_today(today)
+        await msg.reply_text(
+            f"✅ *Reset Selesai!*\n• URL dihapus: `{urls_del}`\n• Progress dihapus: `{prog_del}`",
+            parse_mode="Markdown"
+        )
+
+    elif action == "backup":
+        await msg.reply_text("⏳ *Backup ke SQLite...*", parse_mode="Markdown")
+        from bot.backup import backup_postgres_to_sqlite
+        ok, info = await asyncio.to_thread(backup_postgres_to_sqlite)
+        await msg.reply_text(
+            f"{'✅' if ok else '❌'} *{'Backup Berhasil' if ok else 'Backup Gagal'}!*\n`{info}`",
+            parse_mode="Markdown"
+        )
+
+    elif action == "restore":
+        await msg.reply_text("⏳ *Restore dari SQLite ke PostgreSQL...*", parse_mode="Markdown")
+        from bot.backup import restore_sqlite_to_postgres
+        ok, info = await asyncio.to_thread(restore_sqlite_to_postgres)
+        await msg.reply_text(
+            f"{'✅' if ok else '❌'} *{'Restore Berhasil' if ok else 'Restore Gagal'}!*\n`{info}`",
+            parse_mode="Markdown"
+        )
+
+
+@require_role("admin", "dev")
+async def cb_dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    action = update.callback_query.data.split(":", 1)[1]
+    await _dev_action(update, context, action)
+
 
 
 async def cb_menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -998,6 +1110,93 @@ async def cmd_sync_sheets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ *Sinkronisasi Gagal!*\n\n`{e}`", parse_mode="Markdown")
 
 
+@require_role("admin", "dev")
+async def cmd_push_assignments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Push semua assignment hari ini dari PostgreSQL ke Google Sheets.
+    Berguna jika URL sudah assigned di DB tapi Sheets belum ter-update.
+    """
+    from datetime import timezone
+    from bot.services.sheet_parser import update_sheet_status
+
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+    status_msg = await update.message.reply_text(
+        f"⏳ *Menyinkronkan assignment ke Google Sheets ({today_utc} UTC)...*",
+        parse_mode="Markdown"
+    )
+
+    try:
+        # Ambil semua URL hari ini yang punya verified_by (sudah assigned ke seseorang)
+        # status bisa PENDING, PROCESSING, HTTP_ERR, OK, dll — yang penting punya assigned staff
+        all_tasks = await fdb.list_tasks()
+        task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
+
+        # Query semua URL hari ini yang punya verified_by
+        total_pushed = 0
+        total_skipped = 0
+        errors = 0
+
+        sem = asyncio.Semaphore(5)
+
+        for task in all_tasks:
+            task_id = task["id"]
+            tab = task_tab_map.get(task_id, "Sheet1")
+
+            # Ambil URL yang sudah assigned (verified_by != NULL) dan masih PROCESSING
+            urls, _ = await fdb.list_sheet_urls(
+                task_id=task_id, date=today_utc,
+                status="PROCESSING", limit=500
+            )
+
+            for u in urls:
+                verified_by_id = u.get("verified_by")
+                if not verified_by_id:
+                    total_skipped += 1
+                    continue
+
+                try:
+                    staff_user = await fdb.get_user(int(verified_by_id))
+                    if not staff_user:
+                        total_skipped += 1
+                        continue
+                    username  = staff_user.get("username")
+                    full_name = staff_user.get("full_name")
+                    staff_str = f"@{username}" if username else (full_name if full_name else str(verified_by_id))
+                    status_str = f"ASSIGNED - {staff_str}"
+
+                    async def _push(purl, sstr, sinfo, tname):
+                        async with sem:
+                            try:
+                                await update_sheet_status(purl, sstr, tab_name=tname, staff_info=sinfo)
+                                return True
+                            except Exception as e:
+                                logger.warning(f"[PushAssign] Gagal: {purl}: {e}")
+                                return False
+
+                    ok = await _push(u["payment_url"], status_str, staff_str, tab)
+                    if ok:
+                        total_pushed += 1
+                    else:
+                        errors += 1
+
+                except Exception as e:
+                    logger.error(f"[PushAssign] Error user {verified_by_id}: {e}")
+                    errors += 1
+
+        await update.message.reply_text(
+            f"✅ *Push Assignment Selesai ({today_utc} UTC)*\n\n"
+            f"• Berhasil dikirim ke Sheets : `{total_pushed}`\n"
+            f"• Dilewati (tidak ada staff) : `{total_skipped}`\n"
+            f"• Error                      : `{errors}`\n\n"
+            f"_Kolom F: ASSIGNED-@staff, Kolom G: nama staff_",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        logger.exception(f"[PushAssign] Fatal error: {e}")
+        await status_msg.edit_text(f"❌ *Gagal:* `{e}`")
+
+
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -1043,11 +1242,13 @@ def get_handlers():
         CommandHandler("sync",          cmd_sync_sheets),
         CommandHandler("reset_today",   cmd_reset_today),
         CommandHandler("retry_failed",  cmd_retry_failed),
-        CommandHandler("verify_failed", cmd_verify_failed),
-        CommandHandler("tasks",         cmd_list_tasks),
+        CommandHandler("verify_failed",    cmd_verify_failed),
+        CommandHandler("push_assignments",  cmd_push_assignments),
+        CommandHandler("tasks",             cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),
         CallbackQueryHandler(cb_menu_devtools,      pattern="^menu:devtools$"),
+        CallbackQueryHandler(cb_dev_action,          pattern="^dev:"),
         CallbackQueryHandler(cb_menu_dashboard,     pattern="^menu:dashboard$"),
         CallbackQueryHandler(cb_menu_reminder,      pattern="^menu:reminder$"),
         CallbackQueryHandler(cb_menu_manage_tasks,  pattern="^menu:manage_tasks$"),
