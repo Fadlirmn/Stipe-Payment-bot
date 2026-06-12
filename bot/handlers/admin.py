@@ -708,9 +708,21 @@ async def cb_menu_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
     text = (
-        "🔧 *DEV TOOLS*\n"
+        "🔧 *DEV TOOLS & CONTROL PANEL*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Pilih aksi dari menu di bawah:"
+        "Silakan pilih aksi manajemen sistem di bawah ini:\n\n"
+        "👥 *User Management*:\n"
+        "  - Kelola status pendaftaran user baru\n"
+        "  - Broadcast pesan ke seluruh staff aktif\n\n"
+        "📊 *Task & Synchronization*:\n"
+        "  - Buat/edit quota dan deadline task harian\n"
+        "  - Sinkronisasi URL baru dari Sheets ke Database\n"
+        "  - Kirim ulang data penugasan staff ke Sheets\n\n"
+        "🔑 *Verification & Database*:\n"
+        "  - Re-verifikasi URL Stripe gagal atau reset status\n"
+        "  - Cek saldo token API Key Leonardo & sinkronkan\n"
+        "  - Backup & restore data SQLite ke PostgreSQL\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
     kb = InlineKeyboardMarkup([
         # ── User Management ──────────────────────────────────
