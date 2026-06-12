@@ -189,6 +189,9 @@ def sqlite_get_task(task_id: str) -> dict | None:
     cursor.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
     row = cursor.fetchone()
     conn.close()
+    if row and "task_id" in row and "id" not in row:
+        row = dict(row)
+        row["id"] = row["task_id"]
     return row
 
 
@@ -251,7 +254,13 @@ def sqlite_list_tasks(status: str | None = "active") -> list[dict]:
         cursor.execute("SELECT * FROM tasks")
     rows = cursor.fetchall()
     conn.close()
-    return rows
+    results = []
+    for r in rows:
+        row = dict(r)
+        if "task_id" in row and "id" not in row:
+            row["id"] = row["task_id"]
+        results.append(row)
+    return results
 
 
 def sqlite_add_sheet_url(task_id: str, date: str, account: str,

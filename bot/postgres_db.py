@@ -362,7 +362,13 @@ def postgres_list_tasks(status: str | None = "active") -> list[dict]:
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-    return [dict_clean(r) for r in rows]
+    results = []
+    for r in rows:
+        res = dict_clean(r)
+        if res and "task_id" in res and "id" not in res:
+            res["id"] = res["task_id"]
+        results.append(res)
+    return results
 
 
 def postgres_add_sheet_url(task_id: str, date: str, account: str,

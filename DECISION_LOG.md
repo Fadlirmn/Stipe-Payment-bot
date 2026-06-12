@@ -26,6 +26,10 @@ When the task quota is changed, the pre-assigned pending links for users today b
 7. **Admin Re-Verification Key Synchronization**:
    - *Decision*: Check Leonardo API keys in `re_verify_one` if they are present, rather than checking Stripe URLs only.
    - *Rationale*: Makes sure admin re-verifications use the exact same logic as staff verifications for maximum reliability.
+8. **Compatibility Mapping of Task IDs**:
+   - *Decision*: Automatically map `task_id` value to `id` key in `postgres_list_tasks`, `sqlite_list_tasks`, and `sqlite_get_task` query results.
+   - *Rationale*: Prevents `KeyError: 'id'` crashes in handlers (like `/verify_failed` and `/sync_sheets`) which access `t["id"]` on returned task list row dicts.
+
 
 
 
