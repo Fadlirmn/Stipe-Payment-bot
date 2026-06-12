@@ -827,15 +827,48 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_or_create_user(update)
 
     # Gunakan UTC sebagai patokan tanggal hari ini
-    from datetime import timezone
+    from datetime import timezone, date as date_type
     today_utc = datetime.now(timezone.utc).date().isoformat()
 
     status_msg = await update.message.reply_text(
-        f"⏳ *Mencari URL gagal untuk hari ini ({today_utc} UTC)...*",
+        f"⏳ *Langkah 1/3: Sync dari Google Sheets ({today_utc} UTC)...*",
         parse_mode="Markdown"
     )
 
     try:
+        from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
+        from bot.services.url_verifier import verify_url
+
+        # ── LANGKAH 1: Ambil semua task aktif untuk mengetahui tab name ────────
+        all_tasks = await fdb.list_tasks()   # [{id, sheet_tab, ...}]
+        task_tab_map: dict[str, str] = {
+            t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks
+        }
+
+        # ── LANGKAH 2: Sync dari Sheets — cari URL yang SUDAH memiliki status ──
+        # fetch_today_urls() hanya mengembalikan URL yang BELUM punya status di Sheets
+        # Jadi: URL yang ada di DB (failed) tapi TIDAK ada di hasil fetch → sudah disubmit di Sheets
+        sheet_pending_urls: set[str] = set()
+        tabs_seen: set[str] = set()
+        for task in all_tasks:
+            tab = task.get("sheet_tab", "Sheet1")
+            if tab in tabs_seen:
+                continue
+            tabs_seen.add(tab)
+            try:
+                rows = await fetch_today_urls(tab_name=tab)
+                for r in rows:
+                    sheet_pending_urls.add(r["payment_url"].strip())
+            except Exception as e:
+                logger.warning(f"[VerifyFailed] Gagal fetch tab '{tab}' dari Sheets: {e}")
+
+        await status_msg.edit_text(
+            f"⏳ *Langkah 2/3: Mengambil URL gagal dari DB ({today_utc} UTC)...*\n"
+            f"_Sheets pending: {len(sheet_pending_urls)} URL_",
+            parse_mode="Markdown"
+        )
+
+        # ── LANGKAH 3: Ambil URL failed dari PostgreSQL ────────────────────────
         failed_urls = await fdb.get_all_failed_urls(date_str=today_utc)
         if not failed_urls:
             await status_msg.edit_text(
@@ -844,84 +877,114 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         total_failed = len(failed_urls)
+
+        # Pisahkan: sudah disubmit di Sheets (tidak perlu reverif) vs masih pending
+        already_done: list[dict] = []
+        need_reverif: list[dict] = []
+        for u in failed_urls:
+            purl = u.get("payment_url", "").strip()
+            if purl and purl not in sheet_pending_urls:
+                # Tidak ada di hasil fetch Sheets → sudah punya status di Sheets
+                already_done.append(u)
+            else:
+                need_reverif.append(u)
+
         await status_msg.edit_text(
-            f"⏳ *Menemukan {total_failed} URL gagal untuk {today_utc} (UTC).*\n"
-            f"Memulai re-verifikasi otomatis di background... 🚀",
+            f"⏳ *Langkah 3/3: Re-verifikasi {len(need_reverif)} URL ({today_utc} UTC)...*\n"
+            f"• Sudah disubmit di Sheets: `{len(already_done)}` (skip)\n"
+            f"• Perlu dicek ulang       : `{len(need_reverif)}`\n"
+            f"🚀 _Sedang berjalan..._",
             parse_mode="Markdown"
         )
-        
+
+        # ── Update DB untuk URL yang sudah disubmit di Sheets → reset ke OK ───
+        sync_ok_count = 0
+        for u in already_done:
+            try:
+                await fdb.update_sheet_url(u["id"], status="OK", error_msg=None,
+                                           verified_at=now_wib().isoformat())
+                sync_ok_count += 1
+            except Exception as e:
+                logger.warning(f"[VerifyFailed] Gagal sync-reset {u['payment_url']}: {e}")
+
+        # ── Re-verifikasi URL yang masih pending di Sheets ────────────────────
         sem = asyncio.Semaphore(5)
-        success_count = 0
-        remain_failed = 0
-        
-        async def re_verify_one(url_obj):
-            nonlocal success_count, remain_failed
+        reverif_ok = 0
+        reverif_fail = 0
+
+        async def re_verify_one(url_obj: dict):
+            nonlocal reverif_ok, reverif_fail
             payment_url = url_obj["payment_url"]
-            doc_id = url_obj["id"]
-            task_id = url_obj["task_id"]
-            
+            doc_id      = url_obj["id"]
+            task_id     = url_obj["task_id"]
+            tab         = task_tab_map.get(task_id, "Sheet1")
+
             async with sem:
                 try:
-                    from bot.services.url_verifier import verify_url
                     result = await verify_url(payment_url)
-                    
+
                     db_update = {
-                        "status": result.status.value,
-                        "http_code": result.http_code,
-                        "error_msg": result.message if not result.is_ok else None,
+                        "status":      result.status.value,
+                        "http_code":   result.http_code,
+                        "error_msg":   result.message if not result.is_ok else None,
                         "verified_at": now_wib().isoformat(),
                     }
                     await fdb.update_sheet_url(doc_id, **db_update)
-                    
+
                     try:
-                        task = await fdb.get_task(task_id)
-                        tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-                        from bot.services.sheet_parser import update_sheet_status
-                        await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info="System-AdminReVerify")
+                        await update_sheet_status(
+                            payment_url, result.status.value,
+                            tab_name=tab, staff_info="System-AdminReVerify"
+                        )
                     except Exception as e:
-                        logger.error(f"[ReVerify] Gagal update status Google Sheet untuk {payment_url}: {e}")
-                        
+                        logger.error(f"[ReVerify] Gagal update Sheet untuk {payment_url}: {e}")
+
                     await fdb.add_audit_log(
                         actor_id=user["user_id"], action="url.reverify",
                         target_type="sheet_url", target_id=doc_id,
-                        detail={"url": payment_url, "status": result.status.value, "http_code": result.http_code},
+                        detail={"url": payment_url, "status": result.status.value,
+                                "http_code": result.http_code},
                     )
-                    
+
                     if result.is_ok:
-                        success_count += 1
+                        reverif_ok += 1
                         if url_obj.get("verified_by"):
                             try:
                                 staff_id = int(url_obj["verified_by"])
                                 await fdb.upsert_progress(
-                                    task_id=task_id,
-                                    user_id=staff_id,
+                                    task_id=task_id, user_id=staff_id,
                                     date=url_obj["date"],
-                                    submitted_delta=0,
-                                    ok_delta=1,
-                                    fail_delta=-1
+                                    submitted_delta=0, ok_delta=1, fail_delta=-1
                                 )
                             except Exception as e:
-                                logger.error(f"[ReVerify] Gagal update progress staff {url_obj['verified_by']}: {e}")
+                                logger.error(f"[ReVerify] Gagal update progress: {e}")
                     else:
-                        remain_failed += 1
+                        reverif_fail += 1
+
                 except Exception as ex:
                     logger.error(f"[ReVerify] Error memproses {payment_url}: {ex}")
-                    remain_failed += 1
-                    
-        await asyncio.gather(*(re_verify_one(u) for u in failed_urls), return_exceptions=True)
-        
+                    reverif_fail += 1
+
+        if need_reverif:
+            await asyncio.gather(*(re_verify_one(u) for u in need_reverif), return_exceptions=True)
+
         await update.message.reply_text(
             f"✅ *Re-verifikasi Selesai — {today_utc} (UTC)*\n\n"
-            f"• Total URL diperiksa : `{total_failed}`\n"
-            f"• 🟢 OK (expired/done): `{success_count}`\n"
-            f"• 🟡 Masih aktif/gagal: `{remain_failed}`\n\n"
-            f"_URL 🟢 = link tidak bisa diakses lagi (sudah expired/digunakan)._\n"
-            f"_URL 🟡 = link Stripe masih aktif (belum dibayar)._",
+            f"*Sync dari Sheets:*\n"
+            f"  • Sudah disubmit (skip reverif): `{len(already_done)}`\n"
+            f"  • DB diupdate → OK             : `{sync_ok_count}`\n\n"
+            f"*Re-verifikasi ({len(need_reverif)} URL):*\n"
+            f"  • 🟢 OK (expired/done)  : `{reverif_ok}`\n"
+            f"  • 🟡 Masih aktif/gagal  : `{reverif_fail}`\n\n"
+            f"_🟢 = link tidak bisa diakses (sudah expired/digunakan)_\n"
+            f"_🟡 = link Stripe masih aktif (belum dibayar)_",
             parse_mode="Markdown"
         )
-        
+
     except Exception as e:
+        logger.exception(f"[VerifyFailed] Error: {e}")
         await status_msg.edit_text(f"❌ *Proses Re-verifikasi Gagal:* `{e}`")
+
 
 
 @require_role("admin", "dev")

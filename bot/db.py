@@ -85,6 +85,6 @@ async def get_all_failed_urls(date_str: str | None = None) -> list[dict]:
 async def sync_task_assignments(task_id: str, date_str: str) -> list[dict]:
     return await asyncio.to_thread(pgdb.postgres_sync_task_assignments, task_id, date_str)
 
-async def ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> int:
-    """Pastikan reserved block user sesuai quota terbaru. Return jumlah URL ter-assign."""
+async def ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> list[dict]:
+    """Pastikan reserved block user sesuai quota terbaru. Return list URL yang baru di-assign."""
     return await asyncio.to_thread(pgdb.postgres_ensure_quota_synced, task_id, date_str, user_id)

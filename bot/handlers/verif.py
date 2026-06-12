@@ -488,7 +488,29 @@ async def _show_url_list(
     if user.get("role") not in ("admin", "dev"):
         verified_by_filter = str(user["user_id"])
         if not quota_exceeded:
-            await fdb.ensure_quota_synced(task_id, today, user["user_id"])
+            newly_assigned = await fdb.ensure_quota_synced(task_id, today, user["user_id"])
+            if newly_assigned:
+                # Update Sheets untuk URL yang baru di-assign
+                user_data = await fdb.get_user(user["user_id"])
+                username  = user_data.get("username") if user_data else None
+                full_name = user_data.get("full_name") if user_data else None
+                staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
+                status_str = f"ASSIGNED - {staff_str}"
+                tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
+
+                sem_assign = asyncio.Semaphore(5)
+                async def _sheet_assign(u):
+                    async with sem_assign:
+                        try:
+                            await update_sheet_status(
+                                u["payment_url"], status_str,
+                                tab_name=tab, staff_info=staff_str
+                            )
+                        except Exception as e:
+                            logger.warning(f"[SheetAssign] Gagal update Sheets assign: {e}")
+                asyncio.create_task(
+                    asyncio.gather(*(_sheet_assign(u) for u in newly_assigned), return_exceptions=True)
+                )
 
     urls, total = await fdb.list_sheet_urls(
         task_id=task_id, date=today, limit=limit, offset=offset,
