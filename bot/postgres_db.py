@@ -499,26 +499,81 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
         conn.close()
         return dict_clean(row_to_claim), []
 
-    # 3. Cari block PENDING yang belum di-assign ke siapa-siapa (verified_by IS NULL atau '')
-    # Batasi block size berdasarkan quota per staff
+    # Ambil quota terbaru dari task (selalu fresh dari DB)
     cursor.execute("SELECT quota_per_staff FROM tasks WHERE task_id = %s", (task_id,))
     task_row = cursor.fetchone()
     quota_staff = task_row["quota_per_staff"] if task_row else 0
 
-    block_size = 20
+    # Hitung berapa yang sudah ter-assign ke user ini (PENDING + PROCESSING)
+    cursor.execute("""
+    SELECT COUNT(*) as count FROM sheet_urls
+    WHERE task_id = %s AND date = %s AND status IN ('PENDING', 'PROCESSING') AND verified_by = %s
+    """, (task_id, date_str, user_id_str))
+    total_reserved = cursor.fetchone()["count"]
+
+    # Cek progress yang sudah di-submit
+    cursor.execute("""
+    SELECT submitted FROM task_progress WHERE id = %s
+    """, (f"{task_id}_{user_id}_{date_str}",))
+    prog_row = cursor.fetchone()
+    submitted = prog_row["submitted"] if prog_row else 0
+
+    # Hitung sisa kuota berdasarkan total keseluruhan (submitted + reserved)
     if quota_staff > 0:
+        already_counted = submitted + total_reserved
+        remaining_quota = max(0, quota_staff - already_counted)
+        
+        # Jika ada slot kosong (quota naik atau belum penuh), tambah dari pool
+        if remaining_quota > 0:
+            cursor.execute("""
+            SELECT * FROM sheet_urls
+            WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+            ORDER BY created_at ASC, id ASC
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
+            """, (task_id, date_str, remaining_quota))
+            extra_rows = cursor.fetchall()
+            for r in extra_rows:
+                cursor.execute("""
+                UPDATE sheet_urls SET verified_by = %s WHERE id = %s
+                """, (user_id_str, r["id"]))
+            if extra_rows:
+                conn.commit()
+
+    # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia
+    cursor.execute("""
+    SELECT * FROM sheet_urls
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND verified_by = %s
+    ORDER BY created_at ASC, id ASC
+    LIMIT 1
+    FOR UPDATE
+    """, (task_id, date_str, user_id_str))
+    row_to_claim = cursor.fetchone()
+
+    if row_to_claim:
         cursor.execute("""
-        SELECT submitted FROM task_progress
+        UPDATE sheet_urls
+        SET status = 'PROCESSING', assigned_at = %s
         WHERE id = %s
-        """, (f"{task_id}_{user_id}_{date_str}",))
-        prog_row = cursor.fetchone()
-        submitted = prog_row["submitted"] if prog_row else 0
-        remaining_quota = max(0, quota_staff - submitted)
-        if remaining_quota <= 0:
+        """, (now.isoformat(), row_to_claim["id"]))
+        conn.commit()
+
+        row_to_claim["status"] = "PROCESSING"
+        row_to_claim["assigned_at"] = now.isoformat()
+        cursor.close()
+        conn.close()
+        return dict_clean(row_to_claim), []
+
+    # 3. Tidak ada reserved — claim fresh block dari pool (hanya jika quota belum habis)
+    if quota_staff > 0:
+        remaining = max(0, quota_staff - submitted - total_reserved)
+        if remaining <= 0:
             cursor.close()
             conn.close()
             return None, []
-        block_size = remaining_quota
+        block_size = remaining
+    else:
+        block_size = 20
 
     cursor.execute("""
     SELECT * FROM sheet_urls

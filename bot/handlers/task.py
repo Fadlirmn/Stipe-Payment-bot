@@ -42,12 +42,19 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
             task["deadline"][:16].replace("T", " ") + " WIB"
             if task.get("deadline") else "—"
         )
+        
+        prog = await fdb.get_progress(task["task_id"], user["user_id"], today)
+        user_done = prog.get("submitted", 0) if prog else 0
+        quota_staff = task.get("quota_per_staff", 0)
+        quota_staff_str = f"/{quota_staff}" if quota_staff > 0 else " (unlimited)"
+
         lines.append(
             f"\n📌 `{task['task_id']}`\n"
             f"   {task['title']}\n"
-            f"   Progress : {bar} ({done}/{total})\n"
-            f"   Deadline : {deadline_str}\n"
-            f"   Status   : {task_status_badge(task['status'])}"
+            f"   Progress   : {bar} ({done}/{total})\n"
+            f"   Milik Saya : {user_done}{quota_staff_str}\n"
+            f"   Deadline   : {deadline_str}\n"
+            f"   Status     : {task_status_badge(task['status'])}"
         )
 
     lines.append("\n\n👉 Gunakan /verif untuk memulai verifikasi URL.")

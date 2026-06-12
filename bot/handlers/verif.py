@@ -423,14 +423,20 @@ async def _show_task_options_menu(
         if task.get("deadline") else "—"
     )
 
+    prog = await fdb.get_progress(task_id, user["user_id"], today)
+    user_done = prog.get("submitted", 0) if prog else 0
+    quota_staff = task.get("quota_per_staff", 0)
+    quota_staff_str = f"/{quota_staff}" if quota_staff > 0 else " (unlimited)"
+
     text = (
         f"📋 *PILIHAN TASK*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 Task     : `{task_id}`\n"
-        f"📝 Judul    : {task['title']}\n"
-        f"📅 Tanggal  : {today}\n"
-        f"📊 Progress : {bar} ({done}/{total})\n"
-        f"⏰ Deadline : {deadline_str}\n"
+        f"📌 Task       : `{task_id}`\n"
+        f"📝 Judul      : {task['title']}\n"
+        f"📅 Tanggal    : {today}\n"
+        f"📊 Progress   : {bar} ({done}/{total})\n"
+        f"👤 Milik Saya : {user_done}{quota_staff_str}\n"
+        f"⏰ Deadline   : {deadline_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Pilih metode verifikasi:"
     )
