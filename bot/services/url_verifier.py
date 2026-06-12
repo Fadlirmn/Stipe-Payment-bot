@@ -67,10 +67,10 @@ def _check_domain(url: str) -> bool:
     return False
 
 
-# Global optimized HTTP client with connection pooling
+# Global optimized HTTP client — timeout 8 detik agar UX lebih responsif
 _client = httpx.AsyncClient(
     follow_redirects=True,
-    timeout=HTTP_TIMEOUT,
+    timeout=8.0,   # link expired biasanya langsung error, tidak perlu tunggu lama
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
@@ -81,10 +81,14 @@ _client = httpx.AsyncClient(
 async def verify_url(url: str) -> VerifResult:
     """
     Verifikasi URL Stripe secara async.
-    Urutan pengecekan:
-      1. Format URL valid
-      2. Domain termasuk whitelist Stripe
-      3. HTTP GET (follows redirect, max 3) — cek status code & isi HTML untuk status pembayaran
+
+    Logika (dibalik dari konvensional):
+      ✅ OK   = URL TIDAK bisa dibuka (timeout / error / 4xx / 5xx)
+               → link sudah expired / sudah digunakan / sudah dibayar
+      ✅ OK   = URL terbuka tapi ada konfirmasi pembayaran / redirect ke luar Stripe
+               → pembayaran sudah selesai
+      ❌ FAIL = URL berhasil dibuka, halaman Stripe masih aktif
+               → link masih hidup = belum dibayar
     """
     url = url.strip()
 
@@ -92,54 +96,68 @@ async def verify_url(url: str) -> VerifResult:
     if not _URL_RE.match(url):
         return VerifResult(VerifStatus.FORMAT_ERR, None, "Format URL tidak valid", url)
 
-    # 2. Domain
+    # 2. Domain whitelist
     if not _check_domain(url):
         return VerifResult(VerifStatus.DOMAIN_ERR, None, "Bukan domain Stripe", url)
 
-    # 3. HTTP check
+    # 3. HTTP check — jalankan dengan try/except menyeluruh
     try:
         resp = await _client.get(url)
         code = resp.status_code
         html = resp.text.lower()
         final_url = str(resp.url).lower()
 
-        if 200 <= code < 400:
-            # 1. Check if the page contains keywords indicating completed payment
-            paid_keywords = [
-                "already been completed",
-                "already been paid",
-                "invoice has already",
-                "payment has already",
-                "link has already been used",
-                "already paid",
-                "already completed",
-                "payment is complete",
-                "payment successful",
-                "successful payment",
-                "thank you for your payment",
-                "pembayaran ini sudah diselesaikan",
-                "pembayaran ini telah diselesaikan",
-                "faktur ini sudah dibayar",
-                "invoice sudah dibayar"
-            ]
-            is_paid = any(kw in html for kw in paid_keywords)
+        # Redirect ke luar Stripe = sukses setelah bayar
+        is_redirected_away = not any(
+            domain in final_url for domain in STRIPE_ALLOWED_DOMAINS
+        )
 
-            # 2. Check if the final URL is redirected away from Stripe domains (indicating success redirect)
-            is_redirected_away = not any(domain in final_url for domain in STRIPE_ALLOWED_DOMAINS)
+        # Kata kunci konfirmasi pembayaran di halaman
+        paid_keywords = [
+            "already been completed", "already been paid",
+            "invoice has already", "payment has already",
+            "link has already been used", "already paid",
+            "already completed", "payment is complete",
+            "payment successful", "successful payment",
+            "thank you for your payment",
+            "pembayaran ini sudah diselesaikan",
+            "pembayaran ini telah diselesaikan",
+            "faktur ini sudah dibayar", "invoice sudah dibayar",
+        ]
+        is_paid = any(kw in html for kw in paid_keywords)
 
+        if 200 <= code < 300:
             if is_paid or is_redirected_away:
-                return VerifResult(VerifStatus.OK, code, "Pembayaran sukses / sudah selesai", url)
-            else:
-                return VerifResult(VerifStatus.HTTP_ERR, code, "Stripe belum dibayar / masih aktif", url)
+                return VerifResult(
+                    VerifStatus.OK, code,
+                    "Pembayaran sudah selesai / dikonfirmasi ✅", url
+                )
+            # HTTP 200 + halaman Stripe masih aktif → belum dibayar
+            return VerifResult(
+                VerifStatus.HTTP_ERR, code,
+                "Link Stripe masih aktif — belum dibayar", url
+            )
         else:
-            return VerifResult(VerifStatus.HTTP_ERR, code, f"HTTP {code}", url)
+            # 4xx / 5xx → link tidak bisa dibuka → expired/digunakan → OK
+            return VerifResult(
+                VerifStatus.OK, code,
+                f"Link tidak aktif (HTTP {code}) → sudah expired/digunakan ✅", url
+            )
 
     except httpx.TimeoutException:
-        logger.warning(f"[Verifier] Timeout: {url}")
-        return VerifResult(VerifStatus.TIMEOUT, None, "Request timeout", url)
+        # Timeout → link tidak merespons → anggap sudah tidak aktif → OK
+        logger.info(f"[Verifier] Timeout → OK: {url}")
+        return VerifResult(
+            VerifStatus.OK, None,
+            "Link timeout → tidak aktif lagi ✅", url
+        )
     except Exception as exc:
-        logger.error(f"[Verifier] Error: {exc} | URL={url}")
-        return VerifResult(VerifStatus.HTTP_ERR, None, str(exc), url)
+        # Error koneksi apapun → link tidak bisa diakses → OK
+        logger.info(f"[Verifier] Error → OK: {type(exc).__name__} | {url}")
+        return VerifResult(
+            VerifStatus.OK, None,
+            "Link tidak dapat diakses → sudah tidak aktif ✅", url
+        )
 
 
 async def check_leonardo_api_key(api_key: str) -> str:

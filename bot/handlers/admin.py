@@ -825,17 +825,27 @@ async def cmd_retry_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_role("admin", "dev")
 async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_or_create_user(update)
-    status_msg = await update.message.reply_text("⏳ *Mencari semua URL gagal/timeout di database...*", parse_mode="Markdown")
-    
+
+    # Gunakan UTC sebagai patokan tanggal hari ini
+    from datetime import timezone
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+
+    status_msg = await update.message.reply_text(
+        f"⏳ *Mencari URL gagal untuk hari ini ({today_utc} UTC)...*",
+        parse_mode="Markdown"
+    )
+
     try:
-        failed_urls = await fdb.get_all_failed_urls()
+        failed_urls = await fdb.get_all_failed_urls(date_str=today_utc)
         if not failed_urls:
-            await status_msg.edit_text("ℹ️ Tidak ada URL dengan status gagal (TIMEOUT/HTTP_ERR/ERROR) di database.")
+            await status_msg.edit_text(
+                f"ℹ️ Tidak ada URL gagal (TIMEOUT/HTTP_ERR) untuk hari ini `{today_utc}` (UTC)."
+            )
             return
-            
+
         total_failed = len(failed_urls)
         await status_msg.edit_text(
-            f"⏳ *Menemukan {total_failed} URL gagal dari berbagai waktu.*\n"
+            f"⏳ *Menemukan {total_failed} URL gagal untuk {today_utc} (UTC).*\n"
             f"Memulai re-verifikasi otomatis di background... 🚀",
             parse_mode="Markdown"
         )
@@ -901,11 +911,12 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.gather(*(re_verify_one(u) for u in failed_urls), return_exceptions=True)
         
         await update.message.reply_text(
-            f"✅ *Proses Re-verifikasi Selesai!*\n\n"
-            f"• Total URL diperiksa: `{total_failed}`\n"
-            f"• Berhasil (`🟢 OK`): `{success_count}`\n"
-            f"• Tetap Gagal/Timeout: `{remain_failed}`\n\n"
-            f"_URL yang sukses telah otomatis diupdate statusnya di Google Sheets & Database._",
+            f"✅ *Re-verifikasi Selesai — {today_utc} (UTC)*\n\n"
+            f"• Total URL diperiksa : `{total_failed}`\n"
+            f"• 🟢 OK (expired/done): `{success_count}`\n"
+            f"• 🟡 Masih aktif/gagal: `{remain_failed}`\n\n"
+            f"_URL 🟢 = link tidak bisa diakses lagi (sudah expired/digunakan)._\n"
+            f"_URL 🟡 = link Stripe masih aktif (belum dibayar)._",
             parse_mode="Markdown"
         )
         

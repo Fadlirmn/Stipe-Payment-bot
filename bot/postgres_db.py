@@ -902,13 +902,23 @@ def postgres_retry_failed_urls(date_str: str) -> int:
     return count
 
 
-def postgres_get_all_failed_urls() -> list[dict]:
+def postgres_get_all_failed_urls(date_str: str | None = None) -> list[dict]:
+    """Ambil URL gagal. Jika date_str diberikan, filter hanya untuk tanggal tsb (UTC)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-    SELECT * FROM sheet_urls
-    WHERE status IN ('TIMEOUT', 'HTTP_ERR', 'ERROR')
-    """)
+    if date_str:
+        cursor.execute("""
+        SELECT * FROM sheet_urls
+        WHERE status IN ('TIMEOUT', 'HTTP_ERR', 'ERROR')
+          AND date = %s
+        ORDER BY created_at ASC
+        """, (date_str,))
+    else:
+        cursor.execute("""
+        SELECT * FROM sheet_urls
+        WHERE status IN ('TIMEOUT', 'HTTP_ERR', 'ERROR')
+        ORDER BY created_at ASC
+        """)
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
