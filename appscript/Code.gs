@@ -24,7 +24,9 @@ var COL_PASSWORD  = 1; // B
 var COL_API_KEY   = 2; // C
 var COL_URL       = 3; // D — Stripe URL
 var COL_TIMESTAMP = 4; // E — waktu append
-var COL_STATUS    = 5; // F — SUCCESS / FAILED / ERROR
+var COL_STATUS    = 5; // F — OK / HTTP_ERR / ASSIGNED-xxx / SKIPPED
+var COL_ASSIGN_BY = 6; // G — Assigned By (nama staff yang di-assign)
+var COL_VERIF_BY  = 7; // H — Verified By (nama staff/sistem yang verifikasi)
 
 // Domain Stripe yang valid
 var STRIPE_DOMAINS = /^https?:\/\/(checkout|buy|billing|invoice|pay)?\.?stripe\.com\//i;
@@ -118,27 +120,37 @@ function doPost(e) {
 
     for (var i = 0; i < values.length; i++) {
       if (values[i][COL_URL] === data.stripe_url) {
-        // Tulis status ke Kolom F (Kolom ke-6)
+        var statusUpper = String(data.status).toUpperCase();
+        var isAssign = statusUpper.indexOf("ASSIGNED") === 0;
+
+        // Kolom F — Status utama
         sheet.getRange(i + 1, COL_STATUS + 1).setValue(data.status);
 
-        // Tulis info staff ke Kolom G (Kolom ke-7, sebelahnya) jika disediakan
         if (data.staff_info !== undefined) {
-          sheet.getRange(i + 1, COL_STATUS + 2).setValue(data.staff_info);
+          if (isAssign) {
+            // Kolom G — Assigned By (hanya diisi saat assign, tidak ditimpa verif)
+            sheet.getRange(i + 1, COL_ASSIGN_BY + 1).setValue(data.staff_info);
+          } else {
+            // Kolom H — Verified By (hasil verifikasi, tidak menimpa assign)
+            sheet.getRange(i + 1, COL_VERIF_BY + 1).setValue(data.staff_info);
+          }
         }
 
         // Warna baris secara dinamis
-        var statusUpper = String(data.status).toUpperCase();
         var color = "#ffffff";
         if (statusUpper === "SUCCESS" || statusUpper === "OK") {
-          color = "#b7e1cd"; // Hijau muda jika sukses
-        } else if (statusUpper.indexOf("ASSIGNED") === 0) {
-          color = "#c9daf8"; // Biru muda jika sedang di-assign/proses
-        } else if (statusUpper === "FAILED" || statusUpper === "SKIPPED" || statusUpper === "ERROR") {
-          color = "#f8cecc"; // Merah muda jika gagal/error atau dilewati
+          color = "#b7e1cd"; // Hijau muda — sukses/expired
+        } else if (isAssign) {
+          color = "#c9daf8"; // Biru muda — sedang diproses
+        } else if (statusUpper === "FAILED" || statusUpper === "HTTP_ERR" ||
+                   statusUpper === "TIMEOUT" || statusUpper === "SKIPPED" ||
+                   statusUpper === "ERROR") {
+          color = "#f8cecc"; // Merah muda — gagal/error
         }
         sheet.getRange(i + 1, 1, 1, sheet.getLastColumn()).setBackground(color);
 
-        return jsonOut({ status: "updated", row: i + 1 });
+        return jsonOut({ status: "updated", row: i + 1,
+                         column: isAssign ? "assign_by (G)" : "verif_by (H)" });
       }
     }
     return jsonOut({ status: "not_found" });
