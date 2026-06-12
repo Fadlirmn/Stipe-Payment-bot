@@ -626,24 +626,33 @@ async def et_get_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await fdb.update_task(task_id, **{field: value})
     await fdb.add_audit_log(actor["user_id"], "task.edit", "task", task_id, {"field": field, "value": str(value)})
 
-    unassigned_count = 0
+    assigned_count = 0
     if field == "quota_per_staff":
         today_str = datetime.now(TZ).date().isoformat()
-        unassigned_urls = await fdb.adjust_task_assignments(task_id, today_str)
-        if unassigned_urls:
-            unassigned_count = len(unassigned_urls)
+        newly_assigned_urls = await fdb.sync_task_assignments(task_id, today_str)
+        if newly_assigned_urls:
+            assigned_count = len(newly_assigned_urls)
             task = await fdb.get_task(task_id)
             tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
             
-            async def bg_unassign_urls(urls, sheet_tab):
+            async def bg_update_assigned_sheets(urls, sheet_tab):
                 from bot.services.sheet_parser import update_sheet_status
                 for u in urls:
                     try:
-                        await update_sheet_status(u["payment_url"], "", tab_name=sheet_tab, staff_info="")
+                        u_id = int(u["verified_by"])
+                        user_obj = await fdb.get_user(u_id)
+                        if user_obj:
+                            username = user_obj.get("username")
+                            full_name = user_obj.get("full_name")
+                            staff_str = f"@{username}" if username else (full_name if full_name else str(u_id))
+                        else:
+                            staff_str = str(u_id)
+                        status_str = f"ASSIGNED - {staff_str}"
+                        await update_sheet_status(u["payment_url"], status_str, tab_name=sheet_tab, staff_info=staff_str)
                     except Exception as e:
-                        logger.error(f"[SyncQuota] Gagal reset status sheet untuk {u['payment_url']}: {e}")
+                        logger.error(f"[SyncQuota] Gagal update status sheet untuk {u['payment_url']}: {e}")
             
-            asyncio.create_task(bg_unassign_urls(unassigned_urls, tab))
+            asyncio.create_task(bg_update_assigned_sheets(newly_assigned_urls, tab))
 
     # Cek overlapping daily tasks
     active_tasks = await fdb.list_tasks(status="active")
@@ -657,8 +666,8 @@ async def et_get_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     info_note = ""
-    if unassigned_count > 0:
-        info_note = f"\n🔄 *Sinkronisasi Quota:* Berhasil melepas *{unassigned_count}* URL pending yang di-assign melebihi batas quota baru."
+    if assigned_count > 0:
+        info_note = f"\n🔄 *Sinkronisasi Quota:* Berhasil menambahkan *{assigned_count}* link baru ke staff untuk memenuhi quota baru."
 
     await update.message.reply_text(
         f"✅ Task `{task_id}` berhasil diupdate!\n`{field}` → `{value}`{warning_note}{info_note}",

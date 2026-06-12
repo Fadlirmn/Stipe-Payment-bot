@@ -6,9 +6,14 @@
 When the task quota is changed, the pre-assigned pending links for users today become out of sync, locking them for users who can no longer verify them.
 
 ### Decisions
-1. **Unassign Excess Links**:
-   - *Decision*: Reset `verified_by = NULL` and `assigned_at = NULL` in the database.
-   - *Rationale*: Frees up links to be claimed by other active staff members.
-2. **Google Sheets Status Reset**:
-   - *Decision*: Call `update_sheet_status` with `status = ""` and `staff_info = ""` in a background non-blocking coroutine.
-   - *Rationale*: Resets the status column on Google Sheets, allowing the Apps Script `doGet` function to expose those links to the bot again.
+1. **Link Assignment Synchronization**:
+   - *Decision*: If `quota_per_staff` is increased, dynamically assign additional `PENDING` URLs from the database pool to active staff members. If decreased, retain all existing assigned URLs ("sisa perubahan task sebelumnya").
+   - *Rationale*: Allows users to keep verifying already assigned work while adjusting future capacity correctly.
+2. **Google Sheets Sync**:
+   - *Decision*: Call `update_sheet_status` to mark new allocations as `"ASSIGNED"` when quota is increased.
+3. **HTML / Redirect Status Check**:
+   - *Decision*: Check HTML content for payment completion phrases (e.g. "already completed") and detect success redirects away from Stripe domains.
+   - *Rationale*: Prevents false positives where unpaid checkout pages returned a HTTP 200 and were wrongly validated.
+4. **Optimized Client Pooling**:
+   - *Decision*: Initialize a single global `httpx.AsyncClient` in `url_verifier.py`.
+   - *Rationale*: Reuse TCP connections to handle high concurrency from multiple concurrent staff verification requests.

@@ -82,5 +82,5 @@ async def retry_failed_urls(date_str: str) -> int:
 async def get_all_failed_urls() -> list[dict]:
     return await asyncio.to_thread(pgdb.postgres_get_all_failed_urls)
 
-async def adjust_task_assignments(task_id: str, date_str: str) -> list[dict]:
-    return await asyncio.to_thread(pgdb.postgres_adjust_task_assignments, task_id, date_str)
+async def sync_task_assignments(task_id: str, date_str: str) -> list[dict]:
+    return await asyncio.to_thread(pgdb.postgres_sync_task_assignments, task_id, date_str)
