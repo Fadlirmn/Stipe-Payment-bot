@@ -579,3 +579,62 @@ def sqlite_get_user_active_tasks_today(user_id: int, date_str: str) -> list[str]
     rows = cursor.fetchall()
     conn.close()
     return [r["task_id"] for r in rows]
+
+
+def sqlite_adjust_task_assignments(task_id: str, date_str: str) -> list[dict]:
+    task = sqlite_get_task(task_id)
+    if not task:
+        return []
+    quota_staff = task.get("quota_per_staff", 0)
+    if quota_staff <= 0:
+        return []
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT DISTINCT verified_by FROM sheet_urls
+        WHERE task_id = ? AND date = ? AND status = 'PENDING' AND verified_by IS NOT NULL AND verified_by != ''
+    """, (task_id, date_str))
+    user_rows = cursor.fetchall()
+
+    unassigned_urls = []
+
+    for u_row in user_rows:
+        user_id_str = u_row["verified_by"]
+        if not user_id_str:
+            continue
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            continue
+
+        cursor.execute("""
+            SELECT submitted FROM task_progress
+            WHERE id = ?
+        """, (f"{task_id}_{user_id}_{date_str}",))
+        prog_row = cursor.fetchone()
+        submitted = prog_row["submitted"] if prog_row else 0
+
+        remaining_quota = max(0, quota_staff - submitted)
+
+        cursor.execute("""
+            SELECT * FROM sheet_urls
+            WHERE task_id = ? AND date = ? AND status = 'PENDING' AND verified_by = ?
+            ORDER BY created_at ASC, id ASC
+        """, (task_id, date_str, user_id_str))
+        reserved_rows = cursor.fetchall()
+
+        if len(reserved_rows) > remaining_quota:
+            excess_rows = reserved_rows[remaining_quota:]
+            for r in excess_rows:
+                cursor.execute("""
+                    UPDATE sheet_urls
+                    SET verified_by = NULL, assigned_at = NULL
+                    WHERE id = ?
+                """, (r["id"],))
+                unassigned_urls.append(r)
+
+    conn.commit()
+    conn.close()
+    return unassigned_urls
