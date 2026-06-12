@@ -24,6 +24,12 @@
 5. Fix NameError and Logger:
    - *Decision*: Import `logger` from `loguru` in `bot/handlers/admin.py`.
    - *Rationale*: Prevents crashes when errors/warnings are being logged in admin callbacks.
+6. Pengecekan Kredit API Key:
+   - *Decision*: Parse response from Leonardo.ai and verify that both `apiCreditBalance` and `subscriptionTokens` are greater than 0.
+   - *Rationale*: Prevents keys with 0 credits from being mistakenly treated as ACTIVE, ensuring they are marked as EXPIRED instead.
+7. Penghapusan Tombol Push Status:
+   - *Decision*: Remove **Push Status → Sheet** button from the devtools keyboard.
+   - *Rationale*: Keeps UI clean and prevents redundant manual pushes.
 
 ---
 

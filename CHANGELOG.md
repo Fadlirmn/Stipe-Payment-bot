@@ -12,12 +12,14 @@ All notable changes to this project will be documented in this file.
 - `[Fixed]` Solved `Button_data_invalid` callback query crash in Telegram bot by shortening retry button `callback_data` to remain under the 64-byte Telegram limit.
 - `[Fixed]` Resolved `NameError: name 'logger' is not defined` inside `bot/handlers/admin.py` by importing `logger` from `loguru`.
 - `[Fixed]` Aborted the reconciliation process immediately if Google Sheets fetch fails, preventing incorrect status updates to `OK` due to network timeouts.
+- `[Fixed]` Improved `check_leonardo_api_key` in `url_verifier.py` to parse JSON and check both `apiCreditBalance` and `subscriptionTokens`; the key is marked as `EXPIRED` (Stripe unpaid) if both are <= 0.
 
 ### Changed
 - `[Changed]` Increased default HTTP timeout to 30.0 seconds to accommodate slow responses from Google Apps Script Web App.
 
 ### Removed
 - `[Removed]` Backup and restore SQLite / PostgreSQL manual buttons and their descriptions from `cb_menu_devtools` keyboard inside `bot/handlers/admin.py` to keep the UI focused on verification.
+- `[Removed]` **Push Status → Sheet** button and its corresponding description from `cb_menu_devtools` inside `bot/handlers/admin.py`.
 
 ---
 
