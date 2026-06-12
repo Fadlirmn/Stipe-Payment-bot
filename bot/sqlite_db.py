@@ -395,7 +395,7 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         if remaining_quota <= 0:
             conn.close()
             return None, []
-        block_size = min(20, remaining_quota)
+        block_size = remaining_quota
 
     cursor.execute("""
     SELECT * FROM sheet_urls
