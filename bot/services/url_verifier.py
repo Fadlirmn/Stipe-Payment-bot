@@ -176,6 +176,41 @@ async def check_leonardo_api_key(api_key: str) -> str:
         if r.status_code == 200:
             data = r.json()
             user_details = data.get("user_details", [])
+            total_tokens = 0
+            if user_details:
+                detail = user_details[0]
+                sub_tokens = detail.get("subscriptionTokens") or 0
+                paid_tokens = detail.get("paidTokens") or 0
+                api_paid_tokens = detail.get("apiPaidTokens") or 0
+                total_tokens = sub_tokens + paid_tokens + api_paid_tokens
+            return f"ACTIVE ({total_tokens} tokens)"
+        elif r.status_code == 401:
+            return "EXPIRED"
+        else:
+            return f"FAILED (HTTP {r.status_code})"
+    except Exception as e:
+        logger.error(f"[Verifier] API Key Check Error: {e}")
+        return f"FAILED (Error: {str(e)})"
+
+
+async def verify_and_sync_api_key(api_key: str) -> str:
+    """
+    Verifikasi keaktifan API Key Leonardo.ai secara async dan salin ke Sheet 2.
+    """
+    if not api_key:
+        return ""
+    from bot.services.sheet_parser import copy_active_key_to_sheet
+
+    url = "https://cloud.leonardo.ai/api/rest/v1/me"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {api_key}"
+    }
+    try:
+        r = await _client.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            user_details = data.get("user_details", [])
             email = "Unknown"
             username = "Unknown"
             total_tokens = 0
@@ -192,32 +227,31 @@ async def check_leonardo_api_key(api_key: str) -> str:
                 renewal_val = detail.get("tokenRenewalDate") or "N/A"
                 renewal = renewal_val.split("T")[0] if "T" in renewal_val else renewal_val
 
-            from bot.services.sheet_parser import copy_active_key_to_sheet
-            import asyncio
-            asyncio.create_task(copy_active_key_to_sheet(
+            # Salin ke Google Sheets tab Active Keys
+            await copy_active_key_to_sheet(
                 api_key=api_key,
                 email=email,
                 username=username,
                 tokens=total_tokens,
                 renewal_date=renewal,
                 active_status="Aktif"
-            ))
+            )
             return f"ACTIVE ({total_tokens} tokens)"
         elif r.status_code == 401:
-            from bot.services.sheet_parser import copy_active_key_to_sheet
-            import asyncio
-            asyncio.create_task(copy_active_key_to_sheet(
+            await copy_active_key_to_sheet(
                 api_key=api_key,
                 email="Unknown",
                 username="Unknown",
                 tokens="-",
                 renewal_date="-",
                 active_status="Expired"
-            ))
+            )
             return "EXPIRED"
         else:
             return f"FAILED (HTTP {r.status_code})"
     except Exception as e:
-        logger.error(f"[Verifier] API Key Check Error: {e}")
+        logger.error(f"[Verifier] API Key Verify/Sync Error: {e}")
         return f"FAILED (Error: {str(e)})"
+
+
 
