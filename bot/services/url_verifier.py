@@ -174,11 +174,50 @@ async def check_leonardo_api_key(api_key: str) -> str:
     try:
         r = await _client.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            return "ACTIVE"
+            data = r.json()
+            user_details = data.get("user_details", [])
+            email = "Unknown"
+            username = "Unknown"
+            total_tokens = 0
+            renewal = "N/A"
+            if user_details:
+                detail = user_details[0]
+                user_info = detail.get("user", {})
+                email = user_info.get("email", "N/A")
+                username = user_info.get("username", "N/A")
+                sub_tokens = detail.get("subscriptionTokens") or 0
+                paid_tokens = detail.get("paidTokens") or 0
+                api_paid_tokens = detail.get("apiPaidTokens") or 0
+                total_tokens = sub_tokens + paid_tokens + api_paid_tokens
+                renewal_val = detail.get("tokenRenewalDate") or "N/A"
+                renewal = renewal_val.split("T")[0] if "T" in renewal_val else renewal_val
+
+            from bot.services.sheet_parser import copy_active_key_to_sheet
+            import asyncio
+            asyncio.create_task(copy_active_key_to_sheet(
+                api_key=api_key,
+                email=email,
+                username=username,
+                tokens=total_tokens,
+                renewal_date=renewal,
+                active_status="Aktif"
+            ))
+            return f"ACTIVE ({total_tokens} tokens)"
         elif r.status_code == 401:
+            from bot.services.sheet_parser import copy_active_key_to_sheet
+            import asyncio
+            asyncio.create_task(copy_active_key_to_sheet(
+                api_key=api_key,
+                email="Unknown",
+                username="Unknown",
+                tokens="-",
+                renewal_date="-",
+                active_status="Expired"
+            ))
             return "EXPIRED"
         else:
             return f"FAILED (HTTP {r.status_code})"
     except Exception as e:
         logger.error(f"[Verifier] API Key Check Error: {e}")
         return f"FAILED (Error: {str(e)})"
+

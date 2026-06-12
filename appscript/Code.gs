@@ -24,9 +24,9 @@ var COL_PASSWORD  = 1; // B
 var COL_API_KEY   = 2; // C
 var COL_URL       = 3; // D — Stripe URL
 var COL_TIMESTAMP = 4; // E — waktu append
-var COL_STATUS    = 5; // F — OK / HTTP_ERR / ASSIGNED-xxx / SKIPPED
-var COL_ASSIGN_BY = 6; // G — Assigned By (nama staff yang di-assign)
-var COL_VERIF_BY  = 7; // H — Verified By (nama staff/sistem yang verifikasi)
+var COL_ASSIGN_BY = 5; // F — Assigned By (nama staff yang di-assign)
+var COL_STATUS    = 6; // G — OK / HTTP_ERR / ASSIGNED-xxx / SKIPPED
+var COL_VERIF_BY  = 7; // H — Verified By (nama staff yang verifikasi)
 
 // Domain Stripe yang valid
 var STRIPE_DOMAINS = /^https?:\/\/(checkout|buy|billing|invoice|pay)?\.?stripe\.com\//i;

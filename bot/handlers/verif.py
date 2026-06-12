@@ -273,7 +273,7 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     api_info_str = ""
     if api_key:
         masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
-        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+        api_badge = f"🟢 {api_key_status}" if api_key_status and api_key_status.startswith("ACTIVE") else f"🔴 {api_key_status}"
         api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
 
     if result.is_ok:
@@ -475,7 +475,7 @@ async def _show_url_list(
     # Cek quota — tapi JANGAN blokir akses list, cukup tandai agar tombol verif disembunyikan
     quota_exceeded = False
     submitted = 0
-    if quota_staff > 0:
+    if quota_staff > 0 and user.get("role") not in ("admin", "dev"):
         prog = await fdb.get_progress(task_id, user["user_id"], today)
         submitted = prog.get("submitted", 0) if prog else 0
         quota_exceeded = submitted >= quota_staff
@@ -643,7 +643,7 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
     quota_staff = task.get("quota_per_staff", 0) if task else 0
     quota_exceeded = False
     submitted = 0
-    if quota_staff > 0:
+    if quota_staff > 0 and user.get("role") not in ("admin", "dev"):
         prog = await fdb.get_progress(task_id, user["user_id"], today)
         submitted = prog.get("submitted", 0) if prog else 0
         if submitted >= quota_staff:
@@ -769,7 +769,7 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     api_info_str = ""
     if api_key:
         masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
-        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+        api_badge = f"🟢 {api_key_status}" if api_key_status and api_key_status.startswith("ACTIVE") else f"🔴 {api_key_status}"
         api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
 
     if result.is_ok:

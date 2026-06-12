@@ -17,3 +17,10 @@ When the task quota is changed, the pre-assigned pending links for users today b
 4. **Optimized Client Pooling**:
    - *Decision*: Initialize a single global `httpx.AsyncClient` in `url_verifier.py`.
    - *Rationale*: Reuse TCP connections to handle high concurrency from multiple concurrent staff verification requests.
+5. **Leonardo API Key Checker Integration & Sheet Sync**:
+   - *Decision*: Adopt the checking method from `Leo-bot-new/api-checker` by calling the Leonardo `/me` endpoint to retrieve active token counts (free + paid + api paid) and renewal date. When verified, call Apps Script `copyActiveKey` payload via POST request asynchronously.
+   - *Rationale*: Automates key population into the "Active Keys" sheet immediately after successful payment verification.
+6. **Exemption of Admins & Devs from Staff Quotas**:
+   - *Decision*: Bypass the `quota_exceeded` checks when rendering the verification button for users with admin or dev roles.
+   - *Rationale*: Admins and developers must be able to perform manual verification or overrides even if the regular staff quota limit has been reached.
+

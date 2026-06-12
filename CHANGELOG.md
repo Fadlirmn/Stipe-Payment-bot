@@ -11,3 +11,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - `[Added]` Standalone CLI verifier script `scripts/verify_link.py` for manual checkout checks.
 - `[Added]` Reusable global connection pooling client `_client` in `url_verifier.py` to optimize concurrent verifications.
+- `[Added]` `copy_active_key_to_sheet` in `services/sheet_parser.py` to support copying active Leonardo API keys to Sheet 2 (Active Keys) using POST requests.
+
+### Changed
+- `[Changed]` Excluded admin and dev roles from quota limit enforcement so they can always view and verify links.
+- `[Changed]` `check_leonardo_api_key` in `services/url_verifier.py` to check token details and automatically push active/expired keys to Google Sheets (using the same method as `Leo-bot-new/api-checker`).
+
