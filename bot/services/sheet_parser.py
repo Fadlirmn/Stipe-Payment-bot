@@ -33,7 +33,7 @@ def _is_stripe_url(url: str) -> bool:
 
 # ── Public API ────────────────────────────────────────────
 
-async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = None) -> list[dict]:
+async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = None, all_rows: bool = False) -> list[dict]:
     """
     Mengambil semua baris dari Google Sheet via Apps Script Web App
     yang kolom Date-nya cocok dengan `target_date` (default: hari ini).
@@ -44,7 +44,7 @@ async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date]
     today = target_date or datetime.now(TZ).date()
     date_str = today.strftime("%Y-%m-%d")
 
-    logger.info(f"[SheetParser] Fetching via Apps Script: date={date_str}, tab={tab_name}")
+    logger.info(f"[SheetParser] Fetching via Apps Script: date={date_str}, tab={tab_name}, all_rows={all_rows}")
 
     if not APPS_SCRIPT_URL:
         raise RuntimeError("APPS_SCRIPT_URL belum diset di .env")
@@ -53,6 +53,8 @@ async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date]
         "date": date_str,
         "tab":  tab_name,
     }
+    if all_rows:
+        params["all"] = "1"
 
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
@@ -85,6 +87,8 @@ async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date]
             "status":      str(item.get("status", "")).strip(),
             "date":        str(item.get("date", "")).strip(),
             "timestamp":   str(item.get("timestamp", "")).strip(),
+            "assigned_by": str(item.get("assigned_by", "")).strip(),
+            "verified_by": str(item.get("verified_by", "")).strip(),
         })
 
     logger.info(f"[SheetParser] {len(results)} URL valid untuk tanggal {today}")
@@ -332,6 +336,15 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
         tab         = url_obj["_tab"]
         api_key     = url_obj.get("api_key", "")
 
+        # Pertahankan verifikator/assignee asli agar kontribusi staf tidak hilang
+        original_verifier = url_obj.get("verified_by")
+        target_verifier = original_verifier if original_verifier else str(actor_id)
+        
+        try:
+            target_verifier_id = int(target_verifier)
+        except (ValueError, TypeError):
+            target_verifier_id = actor_id
+
         async with sem:
             try:
                 # Lakukan verifikasi terpadu
@@ -342,7 +355,7 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
                     "status":      result.status.value,
                     "http_code":   result.http_code,
                     "error_msg":   result.message if not result.is_ok else None,
-                    "verified_by": actor_id,
+                    "verified_by": str(target_verifier_id),
                     "verified_at": now_wib().isoformat(),
                 }
                 if api_key:
@@ -363,16 +376,26 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
                     
                     try:
                         await fdb.upsert_progress(
-                            task_id=url_obj["task_id"], user_id=actor_id,
+                            task_id=url_obj["task_id"], user_id=target_verifier_id,
                             date=url_obj["date"],
                             submitted_delta=submitted_delta, ok_delta=ok_delta, fail_delta=fail_delta
                         )
                     except Exception as e:
-                        logger.error(f"[VerifyAll] Gagal update progress: {e}")
+                        logger.error(f"[VerifyAll] Gagal update progress untuk user {target_verifier_id}: {e}")
 
-                # Update ke Google Sheets
+                # Update ke Google Sheets (Tulis verifikator asli ke Sheets jika ada, jika tidak gunakan actor_str)
                 try:
-                    await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info=actor_str)
+                    sheet_staff_info = actor_str
+                    if original_verifier:
+                        try:
+                            orig_user = await fdb.get_user(int(original_verifier))
+                            if orig_user:
+                                username = orig_user.get("username")
+                                full_name = orig_user.get("full_name")
+                                sheet_staff_info = f"@{username}" if username else (full_name if full_name else str(original_verifier))
+                        except Exception:
+                            pass
+                    await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info=sheet_staff_info)
                 except Exception as e:
                     logger.warning(f"[VerifyAll] Gagal update status Sheets untuk {payment_url}: {e}")
 
@@ -395,6 +418,182 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
         "total": total_count,
         "ok": ok_count,
         "fail": fail_count
+    }
+
+
+async def resolve_user_id_by_string(staff_str: str) -> Optional[int]:
+    if not staff_str:
+        return None
+    staff_str = staff_str.strip()
+    if staff_str.isdigit():
+        return int(staff_str)
+    
+    # Bersihkan nama pengguna (buang karakter @ di awal jika ada)
+    uname = staff_str
+    if uname.startswith("@"):
+        uname = uname[1:]
+        
+    import bot.db as fdb
+    # Cek kecocokan username secara langsung
+    user = await fdb.get_user_by_username(uname)
+    if user:
+        return user["user_id"]
+        
+    # Cek case-insensitive username / full_name dengan list_users
+    users = await fdb.list_users()
+    for u in users:
+        u_name = u.get("username")
+        if u_name and u_name.lower() == uname.lower():
+            return u["user_id"]
+        f_name = u.get("full_name")
+        if f_name and f_name.lower() == staff_str.lower():
+            return u["user_id"]
+            
+    return None
+
+
+async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=None) -> dict:
+    """
+    Sinkronisasi status hasil akhir verifikasi (Kolom G) dan verifikator (Kolom H)
+    dari Google Sheets kembali ke database PostgreSQL, serta memperbarui task_progress.
+    """
+    import bot.db as fdb
+    from bot.utils.formatters import now_wib
+    import asyncio
+    import hashlib
+    from datetime import date
+
+    logger.info(f"[SyncStatus] Memulai sinkronisasi status Sheets -> DB untuk tanggal {target_date_utc} UTC")
+
+    # 1. Ambil semua task aktif
+    all_tasks = await fdb.list_tasks()
+    
+    total_processed = 0
+    updated_count = 0
+    errors = []
+
+    for task in all_tasks:
+        task_id = task["id"]
+        tab = task.get("sheet_tab", "Sheet1")
+        
+        try:
+            # Panggil fetch_today_urls dengan all_rows=True untuk mengambil seluruh baris (termasuk yang final)
+            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_utc), all_rows=True)
+        except Exception as e:
+            logger.error(f"[SyncStatus] Gagal fetch tab '{tab}' dari Sheets: {e}")
+            errors.append(f"Tab '{tab}': {e}")
+            continue
+
+        if not rows:
+            continue
+
+        for row in rows:
+            total_processed += 1
+            payment_url = row["payment_url"]
+            sheet_status = row["status"]
+            verified_by_str = row.get("verified_by", "")
+            assigned_by_str = row.get("assigned_by", "")
+            
+            # Cari di DB
+            doc_id = hashlib.md5(f"{task_id}_{payment_url}".encode("utf-8")).hexdigest()
+            db_url = await fdb.get_sheet_url(doc_id)
+            
+            # Jika tidak ada di DB, kita insert sebagai URL baru
+            if not db_url:
+                try:
+                    await fdb.add_sheet_url(
+                        task_id=task_id,
+                        date=target_date_utc,
+                        account=row["account"],
+                        payment_url=payment_url,
+                        notes=row["notes"],
+                        api_key=row.get("api_key", ""),
+                        check_exists=False
+                    )
+                    db_url = await fdb.get_sheet_url(doc_id)
+                except Exception as e:
+                    logger.error(f"[SyncStatus] Gagal insert URL baru {payment_url}: {e}")
+                    continue
+
+            # Tentukan verifikator
+            target_verifier_id = None
+            
+            # 1. Cari dari kolom H (Verified By)
+            if verified_by_str:
+                target_verifier_id = await resolve_user_id_by_string(verified_by_str)
+            
+            # 2. Cari dari kolom F (Assigned By) jika verifikator kosong
+            if not target_verifier_id and assigned_by_str:
+                target_verifier_id = await resolve_user_id_by_string(assigned_by_str)
+                
+            # 3. Gunakan verifikator di DB jika ada
+            if not target_verifier_id and db_url.get("verified_by"):
+                try:
+                    target_verifier_id = int(db_url["verified_by"])
+                except (ValueError, TypeError):
+                    pass
+
+            old_status = db_url.get("status")
+            new_status = sheet_status.strip()
+            
+            # Jika status berbeda dan new_status tidak kosong
+            if new_status and new_status != old_status:
+                is_final_status = new_status in ("OK", "SUCCESS") or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR")
+                
+                # Update DB sheet_urls
+                db_update = {
+                    "status": new_status,
+                    "verified_at": now_wib().isoformat()
+                }
+                if target_verifier_id:
+                    db_update["verified_by"] = str(target_verifier_id)
+                await fdb.update_sheet_url(doc_id, **db_update)
+                updated_count += 1
+
+                # Jika status baru adalah status final dan verifikator teridentifikasi, update progress
+                if is_final_status and target_verifier_id:
+                    submitted_delta = 0
+                    ok_delta = 0
+                    fail_delta = 0
+                    
+                    # Jika status sebelumnya adalah PENDING atau PROCESSING (belum final)
+                    if old_status in ("PENDING", "PROCESSING", None):
+                        submitted_delta = 1
+                        if new_status in ("OK", "SUCCESS"):
+                            ok_delta = 1
+                        else:
+                            fail_delta = 1
+                    else:
+                        # Jika sebelumnya sudah status final, sesuaikan deltas
+                        if new_status in ("OK", "SUCCESS"):
+                            ok_delta = 1
+                        else:
+                            fail_delta = 1
+                            
+                        if old_status in ("OK", "SUCCESS"):
+                            ok_delta -= 1
+                        else:
+                            fail_delta -= 1
+                            
+                    try:
+                        await fdb.upsert_progress(
+                            task_id=task_id,
+                            user_id=target_verifier_id,
+                            date=target_date_utc,
+                            submitted_delta=submitted_delta,
+                            ok_delta=ok_delta,
+                            fail_delta=fail_delta
+                        )
+                    except Exception as e:
+                        logger.error(f"[SyncStatus] Gagal update progress untuk user {target_verifier_id}: {e}")
+
+            if progress_callback:
+                await progress_callback(total_processed)
+
+    return {
+        "processed": total_processed,
+        "updated": updated_count,
+        "errors": errors
     }
 
 

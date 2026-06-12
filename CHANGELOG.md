@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-06-12] — Sync Sheets to DB & Verify All Staff Metric Protections
+
+### Added
+- `[Added]` Fungsi `sync_status_from_sheets_to_db` di `sheet_parser.py` untuk mensinkronisasi status verifikasi dan verifikator dari Google Sheets ke DB.
+- `[Added]` Fungsi `resolve_user_id_by_string` di `sheet_parser.py` untuk resolusi user ID dari username/fullname.
+- `[Added]` Tombol baru **📥 Sync Sheets → DB (Status)** dan callback handler `sync_status_to_db` pada devtools menu.
+
+### Fixed
+- `[Fixed]` Memperbaiki hilangnya data kontribusi staf di DB/dashboard saat admin memicu "Verify All". Sekarang `verified_by` yang berisi ID staf akan tetap dipertahankan dan kemajuannya diupdate ke `task_progress` milik staf.
+
+### Changed
+- `[Changed]` Memodifikasi Apps Script `doGet` dan `fetch_today_urls` agar mendukung parameter query `all=1` untuk mendapatkan seluruh baris (termasuk yang berstatus final) dan mengembalikan data verifikator/assignee.
+- `[Changed]` Mengganti tombol `📤 Push Assign → Sheet` dengan tombol sinkronisasi status dari Google Sheets ke DB.
+
 ## [2026-06-12] — Leonardo API Key Credits Verification, Progress Tracking, and Verify All Today
 
 ### Added

@@ -718,7 +718,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *Task & Synchronization*:\n"
         "  - Buat/edit quota dan deadline task harian\n"
         "  - Sinkronisasi URL baru dari Sheets ke Database\n"
-        "  - Kirim data penugasan staff ke Sheets\n\n"
+        "  - Sinkronisasi status & verifikator dari Sheets ke DB\n\n"
         "🔑 *Verification & Database*:\n"
         "  - Re-verifikasi URL Stripe gagal atau reset status\n"
         "━━━━━━━━━━━━━━━━━━━━"
@@ -730,7 +730,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ── Task & URL ───────────────────────────────────────
         [InlineKeyboardButton("📋 Manage Tasks",         callback_data="menu:manage_tasks")],
         [InlineKeyboardButton("🔄 Sync Sheet → DB",      callback_data="dev:sync"),
-         InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
+         InlineKeyboardButton("📥 Sync Sheets → DB (Status)", callback_data="dev:sync_status_to_db")],
         [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
          InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
         [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today"),
@@ -790,15 +790,14 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
                 parse_mode="Markdown"
             )
 
-    elif action == "push_assignments":
-        # Jalankan langsung logic push_assignments
+    elif action == "sync_status_to_db":
         class _FakeUpdate:
             callback_query = None
             effective_user = update.effective_user
             class message:
                 @staticmethod
                 async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
-        await cmd_push_assignments(_FakeUpdate(), context)
+        await cmd_sync_status_to_db(_FakeUpdate(), context)
 
     elif action == "push_status":
         class _FakeUpdate:
@@ -1079,90 +1078,56 @@ async def cmd_sync_sheets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_role("admin", "dev")
-async def cmd_push_assignments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_sync_status_to_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Push semua assignment hari ini dari PostgreSQL ke Google Sheets.
-    Berguna jika URL sudah assigned di DB tapi Sheets belum ter-update.
+    Sinkronisasi status hasil akhir verifikasi (Kolom G) dan verifikator (Kolom H)
+    dari Google Sheets kembali ke database PostgreSQL, serta memperbarui task_progress.
     """
     from datetime import timezone
-    from bot.services.sheet_parser import update_sheet_status
+    from bot.services.sheet_parser import sync_status_from_sheets_to_db
 
     today_utc = datetime.now(timezone.utc).date().isoformat()
     status_msg = await update.message.reply_text(
-        f"⏳ *Menyinkronkan assignment ke Google Sheets ({today_utc} UTC)...*",
+        f"⏳ *Memulai sinkronisasi status Sheets → DB ({today_utc} UTC)...*",
         parse_mode="Markdown"
     )
 
     try:
-        # Ambil semua URL hari ini yang punya verified_by (sudah assigned ke seseorang)
-        # status bisa PENDING, PROCESSING, HTTP_ERR, OK, dll — yang penting punya assigned staff
-        all_tasks = await fdb.list_tasks()
-        task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
-
-        # Query semua URL hari ini yang punya verified_by
-        total_pushed = 0
-        total_skipped = 0
-        errors = 0
-
-        sem = asyncio.Semaphore(5)
-
-        for task in all_tasks:
-            task_id = task["id"]
-            tab = task_tab_map.get(task_id, "Sheet1")
-
-            # Ambil URL yang sudah assigned (verified_by != NULL) dan masih PROCESSING
-            urls, _ = await fdb.list_sheet_urls(
-                task_id=task_id, date=today_utc,
-                status="PROCESSING", limit=500
-            )
-
-            for u in urls:
-                verified_by_id = u.get("verified_by")
-                if not verified_by_id:
-                    total_skipped += 1
-                    continue
-
+        last_edit_time = 0
+        async def progress_cb(current):
+            nonlocal last_edit_time
+            import time
+            now = time.time()
+            if now - last_edit_time > 1.5:
+                last_edit_time = now
                 try:
-                    staff_user = await fdb.get_user(int(verified_by_id))
-                    if not staff_user:
-                        total_skipped += 1
-                        continue
-                    username  = staff_user.get("username")
-                    full_name = staff_user.get("full_name")
-                    staff_str = f"@{username}" if username else (full_name if full_name else str(verified_by_id))
-                    status_str = f"ASSIGNED - {staff_str}"
+                    await status_msg.edit_text(
+                        f"⏳ *Mensinkronisasikan status Sheets → DB... ({current} URL diproses)*",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
 
-                    async def _push(purl, sstr, sinfo, tname):
-                        async with sem:
-                            try:
-                                await update_sheet_status(purl, sstr, tab_name=tname, staff_info=sinfo)
-                                return True
-                            except Exception as e:
-                                logger.warning(f"[PushAssign] Gagal: {purl}: {e}")
-                                return False
-
-                    ok = await _push(u["payment_url"], status_str, staff_str, tab)
-                    if ok:
-                        total_pushed += 1
-                    else:
-                        errors += 1
-
-                except Exception as e:
-                    logger.error(f"[PushAssign] Error user {verified_by_id}: {e}")
-                    errors += 1
+        res = await sync_status_from_sheets_to_db(today_utc, progress_callback=progress_cb)
+        
+        err_text = ""
+        if res.get("errors"):
+            escaped_errors = [str(err).replace("_", "\\_").replace("*", "\\*") for err in res["errors"]]
+            err_text = f"\n⚠️ *Errors:*\n" + "\n".join(f"  • {err}" for err in escaped_errors)
 
         await update.message.reply_text(
-            f"✅ *Push Assignment Selesai ({today_utc} UTC)*\n\n"
-            f"• Berhasil dikirim ke Sheets : `{total_pushed}`\n"
-            f"• Dilewati (tidak ada staff) : `{total_skipped}`\n"
-            f"• Error                      : `{errors}`\n\n"
-            f"_Kolom F: ASSIGNED-@staff, Kolom G: nama staff_",
+            f"✅ *Sinkronisasi Status Selesai ({today_utc} UTC)*\n\n"
+            f"  • Total URL Diproses : `{res['processed']}`\n"
+            f"  • Status Diperbarui : `{res['updated']}`"
+            f"{err_text}",
             parse_mode="Markdown"
         )
-
     except Exception as e:
-        logger.exception(f"[PushAssign] Fatal error: {e}")
-        await status_msg.edit_text(f"❌ *Gagal:* `{e}`")
+        logger.exception(f"[SyncStatus] Error: {e}")
+        try:
+            await status_msg.edit_text(f"❌ *Sinkronisasi Status Gagal:* `{e}`")
+        except Exception:
+            await update.message.reply_text(f"❌ *Sinkronisasi Status Gagal:* `{e}`", parse_mode="Markdown")
 
 
 @require_role("admin", "dev")
@@ -1290,7 +1255,7 @@ def get_handlers():
         CommandHandler("retry_failed",  cmd_retry_failed),
         CommandHandler("verify_failed",    cmd_verify_failed),
         CommandHandler("verify_all",       cmd_verify_all),
-        CommandHandler("push_assignments",  cmd_push_assignments),
+        CommandHandler("sync_status_to_db", cmd_sync_status_to_db),
         CommandHandler("push_status",       cmd_push_verified_status),
         CommandHandler("tasks",             cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),

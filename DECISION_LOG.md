@@ -1,5 +1,26 @@
 # Decision Log
 
+## [2026-06-12] - Sync Sheets to DB & Verify All Staff Metric Protections
+
+### Context
+1. Admin memicu "Verify All" dan hal ini menimpa kolom `verified_by` di DB dengan ID Admin untuk semua URL harian, yang menyebabkan data kontribusi staf di dashboard hilang.
+2. Penugasan di Google Sheets (Kolom F / Assigned By) tidak boleh tertimpa saat penulisan status kembali ke Sheets.
+3. Dibutuhkan cara menarik kembali status final dan nama verifikator dari Google Sheets ke DB PostgreSQL demi pemulihan atau sinkronisasi balik (reverse sync).
+
+### Decisions
+1. **Proteksi ID Staf di Database**:
+   - *Decision*: Mengubah logika update `verified_by` di DB pada fungsi `verify_all_urls_today` agar mempertahankan ID staf asli jika sudah terisi.
+   - *Rationale*: Mencegah admin menimpa status verifikator asli dari staf dan menjaga keakuratan metrik progress staf di dashboard.
+2. **Proteksi Kolom F Google Sheets**:
+   - *Decision*: Menjaga logika penulisan status di `doPost` Apps Script agar tidak memodifikasi `COL_ASSIGN_BY` (Kolom F) saat status adalah status verifikasi final.
+   - *Rationale*: Menghindari hilangnya data assignment staff di spreadsheet seperti yang diminta oleh user.
+3. **Penyediaan Tombol Sinkronisasi Balik**:
+   - *Decision*: Menghapus tombol legacy `Push Assign → Sheet` (yang tidak lagi dibutuhkan) dan menggantinya dengan tombol `Sync Sheets → DB` (`sync_status_to_db`).
+   - *Rationale*: Mengarahkan alur kerja admin agar dapat memperbarui status dari Google Sheets ke database lokal secara efisien.
+4. **Parameter all/sync di doGet Apps Script**:
+   - *Decision*: Menambahkan parameter query `all=1` pada doGet Apps Script agar mengembalikan semua baris (termasuk yang berstatus final) dan mengembalikan kolom verifikator/assignee.
+   - *Rationale*: Tanpa parameter ini, Apps Script secara default mengabaikan baris yang sudah final sehingga bot tidak bisa mensinkronisasi baris yang sudah selesai dari Sheets.
+
 ## [2026-06-12] - Leonardo API Key Credits Verification, Progress Tracking, and Verify All Today
 
 ### Context

@@ -39,6 +39,7 @@ function doGet(e) {
   var params = (e && e.parameter) ? e.parameter : {};
   var dateStr = params.date || getTodayStr();
   var isDebug = params.debug === "1";
+  var getAll = params.all === "1" || params.sync === "1";
 
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -65,9 +66,8 @@ function doGet(e) {
         continue;
       }
 
-      // Skip baris yang sudah punya status verifikasi final (OK/HTTP_ERR/SKIPPED/dll.)
-      // Jangan skip baris yang berstatus ASSIGNED karena masih harus diverifikasi oleh staff
-      if (currentStatus && !/^ASSIGNED/i.test(currentStatus)) {
+      // Skip baris yang sudah punya status verifikasi final (OK/HTTP_ERR/SKIPPED/dll.) jika tidak meminta semua
+      if (!getAll && currentStatus && !/^ASSIGNED/i.test(currentStatus)) {
         if (isDebug) debugInfo.push({ row: i + 1, reason: "status is final: " + currentStatus });
         continue;
       }
@@ -92,7 +92,9 @@ function doGet(e) {
         status:      currentStatus,
         date:        formatted,
         timestamp:   String(rawTs),
-        row_index:   i + 1  // 1-based, berguna jika bot perlu update status nanti
+        row_index:   i + 1,  // 1-based, berguna jika bot perlu update status nanti
+        assigned_by: String(row[COL_ASSIGN_BY]   || "").trim(),
+        verified_by: String(row[COL_VERIF_BY]    || "").trim()
       });
     }
 
