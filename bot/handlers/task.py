@@ -45,7 +45,7 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"\n📌 `{task['task_id']}`\n"
             f"   {task['title']}\n"
-            f"   Progress : {bar}\n"
+            f"   Progress : {bar} ({done}/{total})\n"
             f"   Deadline : {deadline_str}\n"
             f"   Status   : {task_status_badge(task['status'])}"
         )
