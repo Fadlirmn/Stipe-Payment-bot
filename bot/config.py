@@ -29,7 +29,7 @@ STRIPE_ALLOWED_DOMAINS = [
     "invoice.stripe.com",
     "pay.stripe.com",
 ]
-HTTP_TIMEOUT: float = 10.0
+HTTP_TIMEOUT: float = 30.0
 
 SHEET_DATE_COLUMN = "Date"
 SHEET_URL_COLUMN  = "Payment URL"

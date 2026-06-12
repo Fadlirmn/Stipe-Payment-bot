@@ -161,7 +161,8 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
             for r in rows:
                 sheet_pending_urls.add(r["payment_url"].strip())
         except Exception as e:
-            logger.warning(f"[Reconciler] Gagal fetch tab '{tab}' dari Sheets: {e}")
+            logger.error(f"[Reconciler] Gagal fetch tab '{tab}' dari Sheets: {e}")
+            raise RuntimeError(f"Gagal memanggil Google Sheets untuk tab '{tab}': {e}")
 
     # 3. Ambil URL failed dari DB
     failed_urls = await fdb.get_all_failed_urls(date_str=target_date_utc)
