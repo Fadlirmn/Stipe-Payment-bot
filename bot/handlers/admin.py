@@ -1054,7 +1054,7 @@ async def cmd_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ *Verifikasi Massal Selesai — {today_utc} (UTC)*\n\n"
             f"  • Total URL Diproses : `{res['total']}`\n"
             f"  • 🟢 OK              : `{res['ok']}`\n"
-            f"  • 🟡 FAIL / HTTP_ERR : `{res['fail']}`\n\n"
+            f"  • 🟡 FAIL / HTTP-ERR : `{res['fail']}`\n\n"
             f"_Seluruh status hasil akhir verifikasi telah diperbarui di Google Sheets._",
             parse_mode="Markdown"
         )
