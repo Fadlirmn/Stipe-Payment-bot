@@ -516,13 +516,17 @@ async def _show_url_list(
 
     limit = 5
     offset = (page - 1) * limit
-    
-    # Ambil list URL untuk hari ini dan task_id (staff hanya melihat yang ditugaskan ke mereka)
+
+    # Sync quota dulu — pastikan reserved block sesuai quota terbaru dari DB
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
         verified_by_filter = str(user["user_id"])
+        # Trigger supplement assignment jika quota naik
+        await fdb.ensure_quota_synced(task_id, today, user["user_id"])
+
     urls, total = await fdb.list_sheet_urls(task_id=task_id, date=today, limit=limit, offset=offset, verified_by=verified_by_filter)
     total_pages = max(1, (total + limit - 1) // limit)
+
     
     text_lines = [
         f"📋 *DAFTAR URL VERIFIKASI*",

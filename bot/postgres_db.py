@@ -453,6 +453,70 @@ def postgres_get_next_pending_url(task_id: str, date: str) -> dict | None:
     return dict_clean(row)
 
 
+def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> int:
+    """
+    Pastikan jumlah URL yang ter-reserve untuk user ini sesuai dengan quota_per_staff terbaru.
+    Jika quota naik, otomatis assign URL tambahan dari pool.
+    Return: jumlah URL yang ter-assign setelah sync (PENDING + PROCESSING milik user).
+    """
+    user_id_str = str(user_id)
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Ambil quota terbaru
+    cursor.execute("SELECT quota_per_staff FROM tasks WHERE task_id = %s", (task_id,))
+    task_row = cursor.fetchone()
+    quota_staff = task_row["quota_per_staff"] if task_row else 0
+
+    if quota_staff <= 0:
+        # Tidak ada quota limit — tidak perlu sync
+        cursor.execute("""
+        SELECT COUNT(*) as count FROM sheet_urls
+        WHERE task_id = %s AND date = %s AND verified_by = %s AND status IN ('PENDING','PROCESSING')
+        """, (task_id, date_str, user_id_str))
+        total = cursor.fetchone()["count"]
+        cursor.close()
+        conn.close()
+        return total
+
+    # Hitung submitted
+    cursor.execute("SELECT submitted FROM task_progress WHERE id = %s",
+                   (f"{task_id}_{user_id}_{date_str}",))
+    prog_row = cursor.fetchone()
+    submitted = prog_row["submitted"] if prog_row else 0
+
+    # Hitung total sudah ter-reserve
+    cursor.execute("""
+    SELECT COUNT(*) as count FROM sheet_urls
+    WHERE task_id = %s AND date = %s AND status IN ('PENDING','PROCESSING') AND verified_by = %s
+    """, (task_id, date_str, user_id_str))
+    total_reserved = cursor.fetchone()["count"]
+
+    already_counted = submitted + total_reserved
+    gap = max(0, quota_staff - already_counted)
+
+    if gap > 0:
+        # Assign URL dari pool untuk menutup selisih quota
+        cursor.execute("""
+        SELECT id FROM sheet_urls
+        WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+        ORDER BY created_at ASC, id ASC
+        LIMIT %s
+        FOR UPDATE SKIP LOCKED
+        """, (task_id, date_str, gap))
+        extras = cursor.fetchall()
+        for r in extras:
+            cursor.execute("UPDATE sheet_urls SET verified_by = %s WHERE id = %s",
+                           (user_id_str, r["id"]))
+        if extras:
+            conn.commit()
+        total_reserved += len(extras)
+
+    cursor.close()
+    conn.close()
+    return total_reserved
+
+
 def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> tuple[dict | None, list[dict]]:
     from bot.config import TZ
     from datetime import datetime, timedelta

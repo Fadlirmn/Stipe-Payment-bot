@@ -333,6 +333,61 @@ def sqlite_get_next_pending_url(task_id: str, date: str) -> dict | None:
     conn.close()
     return row
 
+def sqlite_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> int:
+    """
+    Pastikan jumlah URL yang ter-reserve untuk user ini sesuai dengan quota_per_staff terbaru.
+    Jika quota naik, otomatis assign URL tambahan dari pool.
+    Return: jumlah URL yang ter-assign setelah sync (PENDING + PROCESSING milik user).
+    """
+    user_id_str = str(user_id)
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT quota_per_staff FROM tasks WHERE task_id = ?", (task_id,))
+    task_row = cursor.fetchone()
+    quota_staff = task_row["quota_per_staff"] if task_row else 0
+
+    if quota_staff <= 0:
+        cursor.execute("""
+        SELECT COUNT(*) as count FROM sheet_urls
+        WHERE task_id = ? AND date = ? AND verified_by = ? AND status IN ('PENDING','PROCESSING')
+        """, (task_id, date_str, user_id_str))
+        total = cursor.fetchone()["count"]
+        conn.close()
+        return total
+
+    cursor.execute("SELECT submitted FROM task_progress WHERE id = ?",
+                   (f"{task_id}_{user_id}_{date_str}",))
+    prog_row = cursor.fetchone()
+    submitted = prog_row["submitted"] if prog_row else 0
+
+    cursor.execute("""
+    SELECT COUNT(*) as count FROM sheet_urls
+    WHERE task_id = ? AND date = ? AND status IN ('PENDING','PROCESSING') AND verified_by = ?
+    """, (task_id, date_str, user_id_str))
+    total_reserved = cursor.fetchone()["count"]
+
+    already_counted = submitted + total_reserved
+    gap = max(0, quota_staff - already_counted)
+
+    if gap > 0:
+        cursor.execute("""
+        SELECT id FROM sheet_urls
+        WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+        ORDER BY created_at ASC, id ASC
+        LIMIT ?
+        """, (task_id, date_str, gap))
+        extras = cursor.fetchall()
+        for r in extras:
+            cursor.execute("UPDATE sheet_urls SET verified_by = ? WHERE id = ?",
+                           (user_id_str, r["id"]))
+        if extras:
+            conn.commit()
+        total_reserved += len(extras)
+
+    conn.close()
+    return total_reserved
+
 
 def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> tuple[dict | None, list[dict]]:
     from bot.config import TZ
