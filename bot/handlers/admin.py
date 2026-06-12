@@ -717,7 +717,8 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *Task & Synchronization*:\n"
         "  - Buat/edit quota dan deadline task harian\n"
         "  - Sinkronisasi URL baru dari Sheets ke Database\n"
-        "  - Kirim ulang data penugasan staff ke Sheets\n\n"
+        "  - Kirim data penugasan staff ke Sheets\n"
+        "  - Kirim ulang semua status verifikasi (OK/gagal) ke Sheets\n\n"
         "🔑 *Verification & Database*:\n"
         "  - Re-verifikasi URL Stripe gagal atau reset status\n"
         "  - Backup & restore data SQLite ke PostgreSQL\n"
@@ -731,6 +732,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📋 Manage Tasks",         callback_data="menu:manage_tasks")],
         [InlineKeyboardButton("🔄 Sync Sheet → DB",      callback_data="dev:sync"),
          InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
+        [InlineKeyboardButton("✅ Push Status → Sheet",  callback_data="dev:push_status")],
         [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
          InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
         [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],
@@ -788,6 +790,15 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
                 @staticmethod
                 async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
         await cmd_push_assignments(_FakeUpdate(), context)
+
+    elif action == "push_status":
+        class _FakeUpdate:
+            callback_query = None
+            effective_user = update.effective_user
+            class message:
+                @staticmethod
+                async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
+        await cmd_push_verified_status(_FakeUpdate(), context)
 
     elif action == "retry_failed":
         await msg.reply_text("⏳ *Me-reset URL gagal ke PENDING...*", parse_mode="Markdown")
@@ -1231,6 +1242,83 @@ async def cmd_push_assignments(update: Update, context: ContextTypes.DEFAULT_TYP
         await status_msg.edit_text(f"❌ *Gagal:* `{e}`")
 
 
+@require_role("admin", "dev")
+async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from datetime import timezone
+    from bot.services.sheet_parser import update_sheet_status
+
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+
+    status_msg = await update.message.reply_text(
+        "⏳ *Mengambil data verifikasi hari ini untuk dikirim ke Sheets...*",
+        parse_mode="Markdown"
+    )
+
+    try:
+        all_tasks = await fdb.list_tasks()
+        task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
+
+        total_pushed = 0
+        errors = 0
+
+        sem = asyncio.Semaphore(5)
+
+        for task in all_tasks:
+            task_id = task["id"]
+            tab = task_tab_map.get(task_id, "Sheet1")
+
+            # Ambil semua URL hari ini dari DB
+            urls, _ = await fdb.list_sheet_urls(
+                task_id=task_id, date=today_utc, limit=1000
+            )
+
+            # Filter yang statusnya terverifikasi (bukan PENDING/PROCESSING)
+            verified_urls = [u for u in urls if u.get("status") not in ("PENDING", "PROCESSING")]
+
+            async def _push_one(url_obj):
+                nonlocal total_pushed, errors
+                purl = url_obj["payment_url"]
+                status = url_obj["status"]
+                verified_by_id = url_obj.get("verified_by")
+
+                staff_str = "System-Push"
+                if verified_by_id:
+                    try:
+                        staff_user = await fdb.get_user(int(verified_by_id))
+                        if staff_user:
+                            username = staff_user.get("username")
+                            full_name = staff_user.get("full_name")
+                            staff_str = f"@{username}" if username else (full_name if full_name else str(verified_by_id))
+                    except Exception:
+                        pass
+
+                async with sem:
+                    try:
+                        ok = await update_sheet_status(purl, status, tab_name=tab, staff_info=staff_str)
+                        if ok:
+                            total_pushed += 1
+                        else:
+                            errors += 1
+                    except Exception as e:
+                        logger.warning(f"[PushStatus] Gagal push {purl}: {e}")
+                        errors += 1
+
+            if verified_urls:
+                tasks_to_run = [_push_one(u) for u in verified_urls]
+                await asyncio.gather(*tasks_to_run)
+
+        await update.message.reply_text(
+            f"✅ *Push Status Selesai ({today_utc} UTC)*\n\n"
+            f"• Berhasil ditulis ulang ke Sheets : `{total_pushed}`\n"
+            f"• Error                              : `{errors}`\n\n"
+            f"_Seluruh status verifikasi berhasil disinkronisasikan ke Google Sheets._",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.exception(f"[PushStatus] Fatal error: {e}")
+        await update.message.reply_text(f"❌ *Gagal push status:* `{e}`", parse_mode="Markdown")
+
+
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -1278,6 +1366,7 @@ def get_handlers():
         CommandHandler("retry_failed",  cmd_retry_failed),
         CommandHandler("verify_failed",    cmd_verify_failed),
         CommandHandler("push_assignments",  cmd_push_assignments),
+        CommandHandler("push_status",       cmd_push_verified_status),
         CommandHandler("tasks",             cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),
