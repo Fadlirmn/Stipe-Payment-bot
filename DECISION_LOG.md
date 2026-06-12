@@ -1,11 +1,13 @@
 # Decision Log
 
-## [2026-06-12] - Leonardo API Key Credits Verification & Proxy Integration
+## [2026-06-12] - Leonardo API Key Credits Verification, Progress Tracking, and Verify All Today
 
 ### Context
 1. User meminta bot melakukan pengecekan kredit/token API Key Leonardo.ai dengan menjumlahkan `subscriptionTokens` + `paidTokens` + `apiPaidTokens` mengacu pada implementasi `Generative-Leo`.
 2. Jika Stripe URL error (tanda sudah dibayar/expired) ATAU kredit API Key > 0, status akhir verifikasi adalah sukses (OK). Selain itu, status akhir verifikasi dianggap gagal (FAIL).
 3. Dibutuhkan proxy dinamis yang bisa dirotasi per request untuk menghindari ban/rate limit saat memanggil endpoint Leonardo.ai.
+4. Diperlukan tampilan visual kemajuan (progress tracking) saat melakukan sinkronisasi maupun verifikasi massal agar user mengetahui proses sedang berjalan.
+5. Admin membutuhkan tombol verifikasi massal langsung pada seluruh link hari ini dan hasilnya terupdate di Google Sheets.
 
 ### Decisions
 1. **Penyatuan Logika Verifikasi Terpadu**:
@@ -17,6 +19,12 @@
 3. **Penerapan Rotated Proxy per Request**:
    - *Decision*: Menggunakan helper `get_rotated_proxy_url` untuk mem-parsing variable `.env` (`PROXY_URL` atau `RESIDENTIAL_PROXY_URL`). Jika terdeteksi URL API Croxy, bot memanggil API tersebut untuk mendapatkan IP:Port dinamis terbaru dan membuat client `httpx.AsyncClient` ad-hoc untuk request tersebut.
    - *Rationale*: Mencegah IP server bot terblokir karena membuat request berulang ke API Leonardo secara bersamaan.
+4. **Pembatasan Kecepatan Edit Pesan Progress (Throttling)**:
+   - *Decision*: Menerapkan progress callback dengan pembatasan waktu edit pesan minimal 1.5 detik sekali.
+   - *Rationale*: Menghindari bot terkena pemblokiran laju kirim pesan (rate limit) Telegram API saat memproses verifikasi massal yang berjalan cepat dan konkuren.
+5. **Pemisahan Alur Verifikasi Massal**:
+   - *Decision*: Membuat fungsi core `verify_all_urls_today` di `sheet_parser.py` dan mendaftarkan tombol **`⚡ Verif Semua`** serta command `/verify_all` di `admin.py`.
+   - *Rationale*: Memberikan keleluasaan bagi admin untuk memicu pengecekan & penulisan status final ke Google Sheets kapan saja tanpa menunggu scheduler berkala.
 
 ## [2026-06-12] - Reconcile & Re-verify Failed URLs, Menu Cleanup, and Bugfixes
 

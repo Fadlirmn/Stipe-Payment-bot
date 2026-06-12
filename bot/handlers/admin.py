@@ -733,7 +733,8 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
         [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
          InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
-        [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],
+        [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today"),
+         InlineKeyboardButton("⚡ Verif Semua",           callback_data="dev:verify_all")],
         # ── Nav ──────────────────────────────────────────────
         [InlineKeyboardButton("🔙 Kembali",              callback_data="menu:main")],
     ])
@@ -761,19 +762,33 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
         await cmd_users(update, context)
 
     elif action == "sync":
-        await msg.reply_text("⏳ *Sync Sheet → DB dimulai...*", parse_mode="Markdown")
+        progress_msg = await msg.reply_text("⏳ *Sync Sheet → DB dimulai...*", parse_mode="Markdown")
         from bot.handlers.verif import _sync_sheet_to_db
         from datetime import datetime as _dt
         today = _dt.now(TZ).date().isoformat()
         all_tasks = await fdb.list_tasks()
         results = []
-        for t in all_tasks:
+        for i, t in enumerate(all_tasks):
+            try:
+                await progress_msg.edit_text(
+                    f"⏳ *Sync Sheet → DB ({i}/{len(all_tasks)})...*\n"
+                    f"Sedang sinkronisasi task: `{t['id'][:20]}...`",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
             count, err = await _sync_sheet_to_db(t, today)
             results.append(f"• `{t['id'][:20]}`: +{count} URL" + (f" ⚠️{err}" if err else ""))
-        await msg.reply_text(
-            "✅ *Sync Selesai!*\n" + "\n".join(results) if results else "ℹ️ Tidak ada task aktif.",
-            parse_mode="Markdown"
-        )
+        try:
+            await progress_msg.edit_text(
+                "✅ *Sync Selesai!*\n" + "\n".join(results) if results else "ℹ️ Tidak ada task aktif.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await msg.reply_text(
+                "✅ *Sync Selesai!*\n" + "\n".join(results) if results else "ℹ️ Tidak ada task aktif.",
+                parse_mode="Markdown"
+            )
 
     elif action == "push_assignments":
         # Jalankan langsung logic push_assignments
@@ -812,6 +827,15 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
                 @staticmethod
                 async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
         await cmd_verify_failed(_FakeUpdate(), context)
+
+    elif action == "verify_all":
+        class _FakeUpdate:
+            callback_query = None
+            effective_user = update.effective_user
+            class message:
+                @staticmethod
+                async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
+        await cmd_verify_all(_FakeUpdate(), context)
 
     elif action == "reset_today":
         confirm_kb = InlineKeyboardMarkup([[
@@ -955,7 +979,23 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from bot.services.sheet_parser import reconcile_and_verify_failed_urls
 
-        res = await reconcile_and_verify_failed_urls(today_utc, actor_id=user["user_id"])
+        last_edit_time = 0
+        async def progress_cb(current, total):
+            nonlocal last_edit_time
+            import time
+            now = time.time()
+            if now - last_edit_time > 1.5 or current == total:
+                last_edit_time = now
+                try:
+                    await status_msg.edit_text(
+                        f"⏳ *Memproses Re-verifikasi... ({current}/{total})*\n"
+                        f"Mengecek link di database dan menyinkronkan status...",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
+        res = await reconcile_and_verify_failed_urls(today_utc, actor_id=user["user_id"], progress_callback=progress_cb)
 
         await update.message.reply_text(
             f"✅ *Re-verifikasi Selesai — {today_utc} (UTC)*\n\n"
@@ -972,7 +1012,58 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.exception(f"[VerifyFailed] Error: {e}")
-        await status_msg.edit_text(f"❌ *Proses Re-verifikasi Gagal:* `{e}`")
+        try:
+            await status_msg.edit_text(f"❌ *Proses Re-verifikasi Gagal:* `{e}`")
+        except Exception:
+            await update.message.reply_text(f"❌ *Proses Re-verifikasi Gagal:* `{e}`", parse_mode="Markdown")
+
+
+@require_role("admin", "dev")
+async def cmd_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = await get_or_create_user(update)
+    from datetime import timezone
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+
+    status_msg = await update.message.reply_text(
+        f"⏳ *Memulai Verifikasi Massal & Update Sheets untuk Semua Link Hari Ini ({today_utc} UTC)...*",
+        parse_mode="Markdown"
+    )
+
+    try:
+        from bot.services.sheet_parser import verify_all_urls_today
+
+        last_edit_time = 0
+        async def progress_cb(current, total):
+            nonlocal last_edit_time
+            import time
+            now = time.time()
+            if now - last_edit_time > 1.5 or current == total:
+                last_edit_time = now
+                try:
+                    await status_msg.edit_text(
+                        f"⏳ *Memproses Verifikasi Massal... ({current}/{total})*\n"
+                        f"Mengecek Stripe & Leonardo API Key serta menulis status ke Sheets...",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
+        res = await verify_all_urls_today(today_utc, actor_id=user["user_id"], progress_callback=progress_cb)
+
+        await update.message.reply_text(
+            f"✅ *Verifikasi Massal Selesai — {today_utc} (UTC)*\n\n"
+            f"  • Total URL Diproses : `{res['total']}`\n"
+            f"  • 🟢 OK              : `{res['ok']}`\n"
+            f"  • 🟡 FAIL / HTTP_ERR : `{res['fail']}`\n\n"
+            f"_Seluruh status hasil akhir verifikasi telah diperbarui di Google Sheets._",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.exception(f"[VerifyAll] Error: {e}")
+        try:
+            await status_msg.edit_text(f"❌ *Verifikasi Massal Gagal:* `{e}`")
+        except Exception:
+            await update.message.reply_text(f"❌ *Verifikasi Massal Gagal:* `{e}`", parse_mode="Markdown")
 
 
 
@@ -1202,6 +1293,7 @@ def get_handlers():
         CommandHandler("reset_today",   cmd_reset_today),
         CommandHandler("retry_failed",  cmd_retry_failed),
         CommandHandler("verify_failed",    cmd_verify_failed),
+        CommandHandler("verify_all",       cmd_verify_all),
         CommandHandler("push_assignments",  cmd_push_assignments),
         CommandHandler("push_status",       cmd_push_verified_status),
         CommandHandler("tasks",             cmd_list_tasks),

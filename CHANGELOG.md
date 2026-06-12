@@ -2,17 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2026-06-12] — Leonardo API Key Credits Verification & Proxy Integration
+## [2026-06-12] — Leonardo API Key Credits Verification, Progress Tracking, and Verify All Today
 
 ### Added
 - `[Added]` Fungsi `check_leonardo_api_key_credits` di `url_verifier.py` yang menjumlahkan `subscriptionTokens` + `paidTokens` + `apiPaidTokens` untuk sisa kuota numerik API Key Leonardo.ai berdasarkan referensi `Generative-Leo`.
 - `[Added]` Fungsi async `get_rotated_proxy_url` di `url_verifier.py` untuk mendukung perutean dynamic proxy (Croxy API) atau static session-rotated proxy.
 - `[Added]` Konfigurasi `PROXY_URL` dan `RESIDENTIAL_PROXY_URL` pada file `.env` dan `config.py` proyek.
 - `[Added]` Fungsi terpadu `verify_stripe_and_credits` di `url_verifier.py`.
+- `[Added]` Fitur progress tracking visual (e.g. `(5/20)`) untuk proses sync sheet (`action == "sync"`) dan verifikasi massal.
+- `[Added]` Fungsi `verify_all_urls_today` di `sheet_parser.py` dan tombol inline **`⚡ Verif Semua`** serta command `/verify_all` di `admin.py` untuk memicu verifikasi massal semua URL hari ini dan memperbarui statusnya langsung ke database & Google Sheets.
 
 ### Changed
 - `[Changed]` Mengubah logika verifikasi di `verif.py` dan `sheet_parser.py` menjadi: Jika Stripe URL error/mati ATAU sisa kredit Leonardo API Key > 0, maka hasil verifikasi adalah `OK` (sukses). Selain kondisi itu, maka `HTTP_ERR` (gagal).
 - `[Changed]` `check_leonardo_api_key` kini menjadi legacy wrapper yang memanggil fungsi baru `check_leonardo_api_key_credits`.
+- `[Changed]` Memodifikasi `reconcile_and_verify_failed_urls` dan `cmd_verify_failed` agar mendukung throttled `progress_callback` untuk mencegah limitasi laju Telegram (rate limit).
 
 ## [2026-06-12] — Reconcile & Re-verify Failed URLs, Menu Cleanup, and Bugfixes
 

@@ -120,7 +120,7 @@ async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "She
         return False
 
 
-async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optional[int] = None) -> dict:
+async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optional[int] = None, progress_callback = None) -> dict:
     """
     Melakukan verifikasi ulang terhadap URL yang gagal di database dengan mengacu pada Google Sheets.
     Jika URL gagal di DB ternyata sudah tidak ada di baris pending Google Sheets (artinya sudah sukses/OK di Sheets),
@@ -200,9 +200,10 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
     sem = asyncio.Semaphore(5)
     reverif_ok = 0
     reverif_fail = 0
+    processed_count = 0
 
     async def re_verify_one(url_obj: dict):
-        nonlocal reverif_ok, reverif_fail
+        nonlocal reverif_ok, reverif_fail, processed_count
         payment_url = url_obj["payment_url"]
         doc_id      = url_obj["id"]
         task_id     = url_obj["task_id"]
@@ -257,6 +258,10 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
             except Exception as ex:
                 logger.error(f"[Reconciler] Error memproses {payment_url}: {ex}")
                 reverif_fail += 1
+            finally:
+                processed_count += 1
+                if progress_callback:
+                    await progress_callback(processed_count, len(need_reverif))
 
     if need_reverif:
         await asyncio.gather(*(re_verify_one(u) for u in need_reverif), return_exceptions=True)
@@ -274,5 +279,124 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
         "reverif_fail": reverif_fail,
         "total_failed": len(failed_urls)
     }
+
+
+async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_callback=None) -> dict:
+    """
+    Verifikasi SEMUA URL hari ini di DB, lalu update hasilnya ke DB dan Google Sheets.
+    """
+    import bot.db as fdb
+    from bot.services.url_verifier import verify_stripe_and_credits
+    from bot.utils.formatters import now_wib
+    import asyncio
+
+    logger.info(f"[VerifyAll] Memulai verifikasi masal hari ini untuk tanggal {target_date_utc} UTC")
+
+    # 1. Ambil semua task aktif
+    all_tasks = await fdb.list_tasks()
+    task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
+
+    # 2. Ambil semua URL hari ini dari DB
+    all_urls = []
+    for task in all_tasks:
+        task_id = task["id"]
+        urls, _ = await fdb.list_sheet_urls(task_id=task_id, date=target_date_utc, limit=1000)
+        for u in urls:
+            u["_tab"] = task_tab_map.get(task_id, "Sheet1")
+        all_urls.extend(urls)
+
+    if not all_urls:
+        return {"total": 0, "ok": 0, "fail": 0}
+
+    # Ambil info actor
+    actor_str = "Admin-VerifyAll"
+    try:
+        actor_user = await fdb.get_user(actor_id)
+        if actor_user:
+            username = actor_user.get("username")
+            full_name = actor_user.get("full_name")
+            actor_str = f"@{username}" if username else (full_name if full_name else str(actor_id))
+    except Exception:
+        pass
+
+    sem = asyncio.Semaphore(5)
+    total_count = len(all_urls)
+    processed_count = 0
+    ok_count = 0
+    fail_count = 0
+
+    async def verify_one(url_obj: dict):
+        nonlocal processed_count, ok_count, fail_count
+        payment_url = url_obj["payment_url"]
+        doc_id      = url_obj["id"]
+        tab         = url_obj["_tab"]
+        api_key     = url_obj.get("api_key", "")
+
+        async with sem:
+            try:
+                # Lakukan verifikasi terpadu
+                result, api_key_status = await verify_stripe_and_credits(payment_url, api_key)
+
+                # Update ke database
+                db_update = {
+                    "status":      result.status.value,
+                    "http_code":   result.http_code,
+                    "error_msg":   result.message if not result.is_ok else None,
+                    "verified_by": actor_id,
+                    "verified_at": now_wib().isoformat(),
+                }
+                if api_key:
+                    db_update["api_key_status"] = api_key_status
+                await fdb.update_sheet_url(doc_id, **db_update)
+
+                # Catat progress delta kontribusi staf
+                old_status = url_obj.get("status")
+                new_status = result.status.value
+                if old_status != new_status:
+                    submitted_delta = 0
+                    ok_delta = 1 if new_status == "OK" else 0
+                    fail_delta = 1 if new_status != "OK" else 0
+                    if old_status == "OK":
+                        ok_delta -= 1
+                    elif old_status not in ("PENDING", "PROCESSING", None):
+                        fail_delta -= 1
+                    
+                    try:
+                        await fdb.upsert_progress(
+                            task_id=url_obj["task_id"], user_id=actor_id,
+                            date=url_obj["date"],
+                            submitted_delta=submitted_delta, ok_delta=ok_delta, fail_delta=fail_delta
+                        )
+                    except Exception as e:
+                        logger.error(f"[VerifyAll] Gagal update progress: {e}")
+
+                # Update ke Google Sheets
+                try:
+                    await update_sheet_status(payment_url, f"ASSIGNED - {actor_str}", tab_name=tab, staff_info=actor_str)
+                    await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info=actor_str)
+                except Exception as e:
+                    logger.warning(f"[VerifyAll] Gagal update status Sheets untuk {payment_url}: {e}")
+
+                if result.is_ok:
+                    ok_count += 1
+                else:
+                    fail_count += 1
+
+            except Exception as ex:
+                logger.error(f"[VerifyAll] Error memproses {payment_url}: {ex}")
+                fail_count += 1
+            finally:
+                processed_count += 1
+                if progress_callback:
+                    await progress_callback(processed_count, total_count)
+
+    await asyncio.gather(*(verify_one(u) for u in all_urls), return_exceptions=True)
+
+    return {
+        "total": total_count,
+        "ok": ok_count,
+        "fail": fail_count
+    }
+
 
 
