@@ -90,7 +90,5 @@ async def ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> list
     return await asyncio.to_thread(pgdb.postgres_ensure_quota_synced, task_id, date_str, user_id)
 
 
-async def get_today_api_keys(date_str: str) -> list[dict]:
-    """Ambil semua baris hari ini yang memiliki API Key."""
-    return await asyncio.to_thread(pgdb.postgres_get_today_api_keys, date_str)
+
 

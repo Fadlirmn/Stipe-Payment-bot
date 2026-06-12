@@ -720,7 +720,6 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  - Kirim ulang data penugasan staff ke Sheets\n\n"
         "🔑 *Verification & Database*:\n"
         "  - Re-verifikasi URL Stripe gagal atau reset status\n"
-        "  - Cek saldo token API Key Leonardo & sinkronkan\n"
         "  - Backup & restore data SQLite ke PostgreSQL\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
@@ -734,8 +733,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
         [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
          InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
-        [InlineKeyboardButton("🔑 Check API Keys",       callback_data="dev:check_api_keys"),
-         InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],
+        [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],
         # ── Backup ───────────────────────────────────────────
         [InlineKeyboardButton("💾 Backup → SQLite",      callback_data="dev:backup"),
          InlineKeyboardButton("♻️ Restore SQLite → DB",  callback_data="dev:restore")],
@@ -809,15 +807,6 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
                 @staticmethod
                 async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
         await cmd_verify_failed(_FakeUpdate(), context)
-
-    elif action == "check_api_keys":
-        class _FakeUpdate:
-            callback_query = None
-            effective_user = update.effective_user
-            class message:
-                @staticmethod
-                async def reply_text(text, **kw): return await msg.reply_text(text, **kw)
-        await cmd_check_api_keys(_FakeUpdate(), context)
 
     elif action == "reset_today":
         confirm_kb = InlineKeyboardMarkup([[
@@ -1219,82 +1208,6 @@ async def cmd_push_assignments(update: Update, context: ContextTypes.DEFAULT_TYP
         await status_msg.edit_text(f"❌ *Gagal:* `{e}`")
 
 
-@require_role("admin", "dev")
-async def cmd_check_api_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Check all API keys for today from PostgreSQL and copy active ones to Sheet 2.
-    """
-    from datetime import timezone
-    from bot.services.url_verifier import verify_and_sync_api_key
-
-    today_utc = datetime.now(timezone.utc).date().isoformat()
-    status_msg = await update.message.reply_text(
-        f"⏳ *Memulai pengecekan API Key untuk hari ini ({today_utc} UTC)...*",
-        parse_mode="Markdown"
-    )
-
-    try:
-        # Get all rows today that have a non-empty api_key
-        rows = await fdb.get_today_api_keys(today_utc)
-        if not rows:
-            await status_msg.edit_text(
-                f"ℹ️ Tidak ada API Key untuk hari ini `{today_utc}` (UTC) di database."
-            )
-            return
-
-        total_keys = len(rows)
-        await status_msg.edit_text(
-            f"⏳ *Memproses pengecekan {total_keys} API Key ({today_utc} UTC)...*\n"
-            f"🚀 _Sedang berjalan..._",
-            parse_mode="Markdown"
-        )
-
-        active_count = 0
-        expired_count = 0
-        failed_count = 0
-
-        sem = asyncio.Semaphore(5)
-
-        async def check_one(row):
-            nonlocal active_count, expired_count, failed_count
-            api_key = row.get("api_key", "").strip()
-            doc_id = row["id"]
-            if not api_key:
-                return
-
-            async with sem:
-                try:
-                    status = await verify_and_sync_api_key(api_key)
-                    # Update status di database BOTS_STRIPE_VERIF
-                    await fdb.update_sheet_url(doc_id, api_key_status=status)
-                    
-                    if status.startswith("ACTIVE"):
-                        active_count += 1
-                    elif status == "EXPIRED":
-                        expired_count += 1
-                    else:
-                        failed_count += 1
-                except Exception as e:
-                    logger.error(f"[CheckKeys] Error checking key for {row.get('account')}: {e}")
-                    failed_count += 1
-
-        await asyncio.gather(*(check_one(r) for r in rows), return_exceptions=True)
-
-        await update.message.reply_text(
-            f"✅ *Pengecekan & Sinkronisasi API Key Selesai ({today_utc} UTC)*\n\n"
-            f"• Total API Key : `{total_keys}`\n"
-            f"• 🟢 Aktif (Disalin ke Sheet 2) : `{active_count}`\n"
-            f"• 🔴 Expired (Ditandai di Sheet 2) : `{expired_count}`\n"
-            f"• 🟡 Gagal Cek (Error Koneksi) : `{failed_count}`\n\n"
-            f"_Database & Sheet 2 telah diperbarui!_",
-            parse_mode="Markdown"
-        )
-
-    except Exception as e:
-        logger.exception(f"[CheckKeys] Fatal error: {e}")
-        await status_msg.edit_text(f"❌ *Gagal:* `{e}`")
-
-
 def get_handlers():
     config_conv = ConversationHandler(
         entry_points=[
@@ -1342,7 +1255,6 @@ def get_handlers():
         CommandHandler("retry_failed",  cmd_retry_failed),
         CommandHandler("verify_failed",    cmd_verify_failed),
         CommandHandler("push_assignments",  cmd_push_assignments),
-        CommandHandler("check_api_keys",    cmd_check_api_keys),
         CommandHandler("tasks",             cmd_list_tasks),
         CallbackQueryHandler(cb_menu_report,        pattern="^menu:report$"),
         CallbackQueryHandler(cb_menu_users,         pattern="^menu:users$"),

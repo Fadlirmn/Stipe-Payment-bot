@@ -981,17 +981,3 @@ def postgres_sync_task_assignments(task_id: str, date_str: str) -> list[dict]:
     return [dict_clean(r) for r in newly_assigned_urls]
 
 
-def postgres_get_today_api_keys(date_str: str) -> list[dict]:
-    """Ambil semua baris hari ini yang memiliki API Key."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-    SELECT * FROM sheet_urls
-    WHERE date = %s AND api_key IS NOT NULL AND api_key != ''
-    ORDER BY created_at ASC
-    """, (date_str,))
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return [dict_clean(r) for r in rows]
-
