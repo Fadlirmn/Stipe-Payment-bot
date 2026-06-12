@@ -740,7 +740,6 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💾 Backup → SQLite",      callback_data="dev:backup"),
          InlineKeyboardButton("♻️ Restore SQLite → DB",  callback_data="dev:restore")],
         # ── Nav ──────────────────────────────────────────────
-        [InlineKeyboardButton("📊 Dashboard",            callback_data="menu:dashboard")],
         [InlineKeyboardButton("🔙 Kembali",              callback_data="menu:main")],
     ])
     try:
@@ -879,18 +878,7 @@ async def cb_menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cb_menu_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    text = (
-        "🔔 *SET REMINDER*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Fitur pengingat otomatis berjalan setiap hari pukul *22:00 WIB* "
-        "untuk mengirim ringkasan laporan harian kepada Admin dan Dev.\n\n"
-        "_Pengaturan pengingat kustom lewat bot akan segera hadir._"
-    )
-    await update.callback_query.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=back_keyboard()
-    )
+
 
 
 @require_role("admin", "dev")
@@ -1378,7 +1366,6 @@ def get_handlers():
         CallbackQueryHandler(cb_menu_devtools,      pattern="^menu:devtools$"),
         CallbackQueryHandler(cb_dev_action,          pattern="^dev:"),
         CallbackQueryHandler(cb_menu_dashboard,     pattern="^menu:dashboard$"),
-        CallbackQueryHandler(cb_menu_reminder,      pattern="^menu:reminder$"),
         CallbackQueryHandler(cb_menu_manage_tasks,  pattern="^menu:manage_tasks$"),
         CallbackQueryHandler(cb_task_detail,        pattern="^task:detail:"),
         CallbackQueryHandler(cb_task_sync_sheet,    pattern="^task:sync:"),

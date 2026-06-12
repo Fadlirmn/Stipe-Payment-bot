@@ -27,7 +27,6 @@ def main_menu_keyboard(role: str) -> InlineKeyboardMarkup:
         ])
         base.append([
             InlineKeyboardButton("📈 Report", callback_data="menu:report"),
-            InlineKeyboardButton("🔔 Set Reminder", callback_data="menu:reminder"),
         ])
         base.append([
             InlineKeyboardButton("🌐 Dashboard", callback_data="menu:dashboard"),

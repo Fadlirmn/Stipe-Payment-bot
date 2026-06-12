@@ -472,11 +472,11 @@ def postgres_get_next_pending_url(task_id: str, date: str) -> dict | None:
     return dict_clean(row)
 
 
-def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> int:
+def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> list[dict]:
     """
     Pastikan jumlah URL yang ter-reserve untuk user ini sesuai dengan quota_per_staff terbaru.
     Jika quota naik, otomatis assign URL tambahan dari pool.
-    Return: jumlah URL yang ter-assign setelah sync (PENDING + PROCESSING milik user).
+    Return: list URL yang BARU di-assign (list kosong jika tidak ada perubahan).
     """
     user_id_str = str(user_id)
     conn = get_connection()
@@ -489,14 +489,9 @@ def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> i
 
     if quota_staff <= 0:
         # Tidak ada quota limit — tidak perlu sync
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM sheet_urls
-        WHERE task_id = %s AND date = %s AND verified_by = %s AND status IN ('PENDING','PROCESSING')
-        """, (task_id, date_str, user_id_str))
-        total = cursor.fetchone()["count"]
         cursor.close()
         conn.close()
-        return total
+        return []
 
     # Hitung submitted
     cursor.execute("SELECT submitted FROM task_progress WHERE id = %s",
@@ -517,7 +512,7 @@ def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> i
     if gap > 0:
         # Assign URL dari pool untuk menutup selisih quota
         cursor.execute("""
-        SELECT id FROM sheet_urls
+        SELECT * FROM sheet_urls
         WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
         ORDER BY created_at ASC, id ASC
         LIMIT %s
@@ -529,11 +524,13 @@ def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> i
                            (user_id_str, r["id"]))
         if extras:
             conn.commit()
-        total_reserved += len(extras)
+        cursor.close()
+        conn.close()
+        return [dict_clean(r) for r in extras]
 
     cursor.close()
     conn.close()
-    return total_reserved
+    return []
 
 
 def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> tuple[dict | None, list[dict]]:

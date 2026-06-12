@@ -29,7 +29,9 @@ When the task quota is changed, the pre-assigned pending links for users today b
 8. **Compatibility Mapping of Task IDs**:
    - *Decision*: Automatically map `task_id` value to `id` key in `postgres_list_tasks`, `sqlite_list_tasks`, and `sqlite_get_task` query results.
    - *Rationale*: Prevents `KeyError: 'id'` crashes in handlers (like `/verify_failed` and `/sync_sheets`) which access `t["id"]` on returned task list row dicts.
-
+9. **Return Type Consistency for `ensure_quota_synced`**:
+    - *Decision*: Ubah return type dari `int` (count) menjadi `list[dict]` (URL objects yang baru di-assign).
+    - *Rationale*: Caller di `_show_url_list` mengiterasi return value untuk update status ke Google Sheets per-URL. Mengembalikan `int` menyebabkan `TypeError: 'int' object is not iterable` yang membuat bot crash saat staff membuka daftar link.
 
 
 
