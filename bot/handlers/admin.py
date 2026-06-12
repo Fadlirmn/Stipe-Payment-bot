@@ -718,8 +718,7 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *Task & Synchronization*:\n"
         "  - Buat/edit quota dan deadline task harian\n"
         "  - Sinkronisasi URL baru dari Sheets ke Database\n"
-        "  - Kirim data penugasan staff ke Sheets\n"
-        "  - Kirim ulang semua status verifikasi (OK/gagal) ke Sheets\n\n"
+        "  - Kirim data penugasan staff ke Sheets\n\n"
         "🔑 *Verification & Database*:\n"
         "  - Re-verifikasi URL Stripe gagal atau reset status\n"
         "━━━━━━━━━━━━━━━━━━━━"
@@ -732,7 +731,6 @@ async def cb_menu_devtools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📋 Manage Tasks",         callback_data="menu:manage_tasks")],
         [InlineKeyboardButton("🔄 Sync Sheet → DB",      callback_data="dev:sync"),
          InlineKeyboardButton("📤 Push Assign → Sheet",  callback_data="dev:push_assignments")],
-        [InlineKeyboardButton("✅ Push Status → Sheet",  callback_data="dev:push_status")],
         [InlineKeyboardButton("🔁 Retry Failed (PENDING)",callback_data="dev:retry_failed"),
          InlineKeyboardButton("🔍 Verif Ulang Gagal",    callback_data="dev:verify_failed")],
         [InlineKeyboardButton("🗑️ Reset Hari Ini",       callback_data="dev:reset_today")],

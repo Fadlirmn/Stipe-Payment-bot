@@ -164,7 +164,7 @@ async def verify_url(url: str) -> VerifResult:
 async def check_leonardo_api_key(api_key: str) -> str:
     """
     Verifikasi keaktifan API Key Leonardo.ai secara async.
-    Hanya mengecek aktif/tidaknya key (bisa dipakai/tidak).
+    Mengecek keaktifan key dan memastikan sisa kredit/token > 0.
     """
     if not api_key:
         return ""
@@ -176,7 +176,21 @@ async def check_leonardo_api_key(api_key: str) -> str:
     try:
         r = await _client.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            return "ACTIVE"
+            try:
+                payload = r.json()
+                user_details = payload.get("user_details", [])
+                if user_details and isinstance(user_details, list):
+                    user_info = user_details[0]
+                    credits = user_info.get("apiCreditBalance", 0) or 0
+                    tokens = user_info.get("subscriptionTokens", 0) or 0
+                    
+                    if credits <= 0 and tokens <= 0:
+                        logger.warning(f"[Verifier] API Key has no credits/tokens (credits={credits}, tokens={tokens})")
+                        return "EXPIRED"
+                return "ACTIVE"
+            except Exception as e:
+                logger.error(f"[Verifier] Failed to parse Leonardo API response JSON: {e}")
+                return "ACTIVE"  # Fallback to active if response parsing fails but status is 200
         elif r.status_code == 401:
             return "EXPIRED"
         else:
