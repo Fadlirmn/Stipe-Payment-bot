@@ -58,20 +58,8 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
         return
 
-    # Check quota per staff harian
-    quota_staff = task.get("quota_per_staff", 0)
-    if quota_staff > 0:
-        prog = await fdb.get_progress(task_id, user["user_id"], today)
-        submitted = prog.get("submitted", 0) if prog else 0
-        if submitted >= quota_staff:
-            await update.callback_query.message.reply_text(
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
-                f"Terima kasih atas kerja kerasnya! 🙌",
-                parse_mode="Markdown",
-                reply_markup=back_keyboard()
-            )
-            return
+    # Quota bersifat INFORMATIF — tidak memblokir akses verifikasi
+
 
     existing_count = await fdb.count_sheet_urls(task_id, today)
     if existing_count == 0:
@@ -145,21 +133,8 @@ async def _show_next_pending_url(
     today: str,
 ):
     task = await fdb.get_task(task_id)
-    # Check quota per staff harian sebelum mengambil URL baru
-    quota_staff = task.get("quota_per_staff", 0) if task else 0
-    if quota_staff > 0:
-        prog = await fdb.get_progress(task_id, user_id, today)
-        submitted = prog.get("submitted", 0) if prog else 0
-        if submitted >= quota_staff:
-            text = (
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
-                f"Terima kasih atas kerja kerasnya! 🙌"
-            )
-            msg = update.callback_query.message if update.callback_query else update.message
-            await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-            return
+    # Quota bersifat INFORMATIF — tidak memblokir pengambilan URL berikutnya
+
 
     url_obj, claimed_urls = await fdb.get_or_claim_next_url(task_id, today, user_id)
 
@@ -246,20 +221,9 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today       = url_obj["date"]
     api_key     = url_obj.get("api_key", "")
 
-    # Check quota per staff harian
+    # Quota bersifat INFORMATIF — tidak memblokir verifikasi
     task = await fdb.get_task(task_id)
-    quota_staff = task.get("quota_per_staff", 0) if task else 0
-    if quota_staff > 0:
-        prog = await fdb.get_progress(task_id, user["user_id"], today)
-        submitted = prog.get("submitted", 0) if prog else 0
-        if submitted >= quota_staff:
-            await update.callback_query.message.reply_text(
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
-                parse_mode="Markdown",
-                reply_markup=back_keyboard()
-            )
-            return
+
 
     result = await verify_url(payment_url)
 
@@ -507,26 +471,14 @@ async def _show_url_list(
     user = await get_or_create_user(update)
     task = await fdb.get_task(task_id)
     quota_staff = task.get("quota_per_staff", 0) if task else 0
+
+    # Cek quota — tapi JANGAN blokir akses list, cukup tandai agar tombol verif disembunyikan
+    quota_exceeded = False
+    submitted = 0
     if quota_staff > 0:
         prog = await fdb.get_progress(task_id, user["user_id"], today)
         submitted = prog.get("submitted", 0) if prog else 0
-        if submitted >= quota_staff:
-            text = (
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.\n\n"
-                f"Terima kasih atas kerja kerasnya! 🙌"
-            )
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Kembali", callback_data="menu:verif")]])
-            msg = update.callback_query.message if update.callback_query else update.message
-            if update.callback_query:
-                try:
-                    await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
-                except Exception:
-                    await msg.reply_text(text, parse_mode="Markdown", reply_markup=kb)
-            else:
-                await msg.reply_text(text, parse_mode="Markdown", reply_markup=kb)
-            return
+        quota_exceeded = submitted >= quota_staff
 
     limit = 5
     offset = (page - 1) * limit
@@ -535,22 +487,29 @@ async def _show_url_list(
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
         verified_by_filter = str(user["user_id"])
-        # Trigger supplement assignment jika quota naik
-        await fdb.ensure_quota_synced(task_id, today, user["user_id"])
+        if not quota_exceeded:
+            await fdb.ensure_quota_synced(task_id, today, user["user_id"])
 
-    urls, total = await fdb.list_sheet_urls(task_id=task_id, date=today, limit=limit, offset=offset, verified_by=verified_by_filter)
+    urls, total = await fdb.list_sheet_urls(
+        task_id=task_id, date=today, limit=limit, offset=offset,
+        verified_by=verified_by_filter
+    )
     total_pages = max(1, (total + limit - 1) // limit)
 
-    
+    quota_str = f"{submitted}/{quota_staff}" if quota_staff > 0 else f"{submitted} (unlimited)"
     text_lines = [
         f"📋 *DAFTAR URL VERIFIKASI*",
-        f"📌 Task: `{task_id}`",
+        f"📌 Task   : `{task_id}`",
         f"📅 Tanggal: {today}",
-        f"━━━━━━━━━━━━━━━━━━━━"
+        f"👤 Kuota  : {quota_str}",
+        f"━━━━━━━━━━━━━━━━━━━━",
     ]
-    
+    if quota_exceeded:
+        text_lines.append("✅ *Kuota hari ini sudah terpenuhi* — Anda bisa melihat link tapi verifikasi ditutup.")
+        text_lines.append("━━━━━━━━━━━━━━━━━━━━")
+
     buttons = []
-    
+
     if not urls:
         text_lines.append("📭 Tidak ada URL.")
     else:
@@ -565,11 +524,11 @@ async def _show_url_list(
                 "PROCESSING": "⏳",
                 "SKIPPED": "⏭️"
             }.get(status, "⚪")
-            
+
             acc = u.get("account") or "-"
             notes = u.get("notes") or ""
             notes_str = f" ({notes})" if notes else ""
-            
+
             staff_str = ""
             verified_by_id = u.get("verified_by")
             if verified_by_id:
@@ -585,13 +544,19 @@ async def _show_url_list(
                 f"{idx}. {emoji} *{acc}*{notes_str}{staff_str}\n"
                 f"   🔗 [Buka Stripe Checkout]({u['payment_url']})"
             )
-            
-            buttons.append(InlineKeyboardButton(f"⚡ Verif #{idx}", callback_data=f"url:show_detail:{u['id']}:{page}"))
-            
+
+            # Tombol verif hanya tampil jika quota belum penuh
+            if not quota_exceeded:
+                buttons.append(InlineKeyboardButton(
+                    f"⚡ Verif #{idx}", callback_data=f"url:show_detail:{u['id']}:{page}"
+                ))
+
     text_lines.append("━━━━━━━━━━━━━━━━━━━━")
-    text_lines.append(f"Silakan klik link di atas untuk membuka Stripe Checkout.")
-    text_lines.append(f"Klik tombol di bawah untuk memverifikasi URL spesifik.")
-    
+    if quota_exceeded:
+        text_lines.append("_Link di atas bisa dibuka langsung dari Telegram._")
+    else:
+        text_lines.append("Klik link untuk membuka Stripe Checkout, atau tombol untuk verifikasi.")
+
     kb_rows = []
     row = []
     for btn in buttons:
@@ -601,9 +566,12 @@ async def _show_url_list(
             row = []
     if row:
         kb_rows.append(row)
-        
-    if urls:
-        kb_rows.append([InlineKeyboardButton("⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:{page}")])
+
+    # Tombol "Verif Semua PENDING" hanya muncul jika quota belum penuh
+    if urls and not quota_exceeded:
+        kb_rows.append([InlineKeyboardButton(
+            "⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:{page}"
+        )])
 
     nav_row = []
     if page > 1:
@@ -612,10 +580,10 @@ async def _show_url_list(
     if page < total_pages:
         nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"url:list_page:{task_id}:{page+1}"))
     kb_rows.append(nav_row)
-    
+
     kb_rows.append([InlineKeyboardButton("🔙 Kembali", callback_data=f"task:select:{task_id}")])
     markup = InlineKeyboardMarkup(kb_rows)
-    
+
     msg = update.callback_query.message
     try:
         await update.callback_query.edit_message_text(
@@ -631,6 +599,7 @@ async def _show_url_list(
             reply_markup=markup,
             disable_web_page_preview=True
         )
+
 
 
 async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -740,20 +709,9 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     today       = url_obj["date"]
     api_key     = url_obj.get("api_key", "")
 
-    # Check quota per staff harian
+    # Quota bersifat INFORMATIF — tidak memblokir verifikasi
     task = await fdb.get_task(task_id)
-    quota_staff = task.get("quota_per_staff", 0) if task else 0
-    if quota_staff > 0:
-        prog = await fdb.get_progress(task_id, user["user_id"], today)
-        submitted = prog.get("submitted", 0) if prog else 0
-        if submitted >= quota_staff:
-            await update.callback_query.message.reply_text(
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
-                parse_mode="Markdown",
-                reply_markup=back_keyboard()
-            )
-            return
+
 
     result = await verify_url(payment_url)
 
