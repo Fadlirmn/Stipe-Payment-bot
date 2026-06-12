@@ -1,5 +1,23 @@
 # Decision Log
 
+## [2026-06-12] - Leonardo API Key Credits Verification & Proxy Integration
+
+### Context
+1. User meminta bot melakukan pengecekan kredit/token API Key Leonardo.ai dengan menjumlahkan `subscriptionTokens` + `paidTokens` + `apiPaidTokens` mengacu pada implementasi `Generative-Leo`.
+2. Jika Stripe URL error (tanda sudah dibayar/expired) ATAU kredit API Key > 0, status akhir verifikasi adalah sukses (OK). Selain itu, status akhir verifikasi dianggap gagal (FAIL).
+3. Dibutuhkan proxy dinamis yang bisa dirotasi per request untuk menghindari ban/rate limit saat memanggil endpoint Leonardo.ai.
+
+### Decisions
+1. **Penyatuan Logika Verifikasi Terpadu**:
+   - *Decision*: Membuat fungsi pembungkus `verify_stripe_and_credits` di `url_verifier.py` yang menggabungkan hasil verifikasi Stripe dan status token Leonardo API Key.
+   - *Rationale*: Meminimalisir duplikasi kode karena logika verifikasi ini dipanggil di 4 tempat berbeda di dalam bot.
+2. **Kalkulasi Sisa Kredit Akurat**:
+   - *Decision*: Mengambil dan menjumlahkan `subscriptionTokens` + `paidTokens` + `apiPaidTokens` dari object `user_details[0]` respons API Leonardo.
+   - *Rationale*: Mengikuti standar yang sudah teruji di repositori `Generative-Leo` milik user.
+3. **Penerapan Rotated Proxy per Request**:
+   - *Decision*: Menggunakan helper `get_rotated_proxy_url` untuk mem-parsing variable `.env` (`PROXY_URL` atau `RESIDENTIAL_PROXY_URL`). Jika terdeteksi URL API Croxy, bot memanggil API tersebut untuk mendapatkan IP:Port dinamis terbaru dan membuat client `httpx.AsyncClient` ad-hoc untuk request tersebut.
+   - *Rationale*: Mencegah IP server bot terblokir karena membuat request berulang ke API Leonardo secara bersamaan.
+
 ## [2026-06-12] - Reconcile & Re-verify Failed URLs, Menu Cleanup, and Bugfixes
 
 ### Context

@@ -11,7 +11,7 @@ from enum import Enum
 import httpx
 from loguru import logger
 
-from bot.config import STRIPE_ALLOWED_DOMAINS, HTTP_TIMEOUT
+from bot.config import STRIPE_ALLOWED_DOMAINS, HTTP_TIMEOUT, LEONARDO_PROXY_URL
 
 
 class VerifStatus(str, Enum):
@@ -77,6 +77,68 @@ _client = httpx.AsyncClient(
         "Accept-Language": "en-US,en;q=0.9"
     },
 )
+
+# Residential Proxy Session Rotator & API Croxy client
+async def get_rotated_proxy_url(proxy_url: str | None) -> str | None:
+    """
+    Mendapatkan URL proxy dengan rotasi IP per request.
+    Jika proxy_url adalah API Croxy, bot melakukan GET request ke API tersebut.
+    Jika merupakan URL proxy biasa, dirotasi session ID-nya jika memiliki username:password.
+    """
+    if not proxy_url:
+        return None
+    proxy_url = proxy_url.strip()
+    
+    # 1. API Croxy (get-ip-v3 / api.croxy.com)
+    if "api.croxy.com" in proxy_url or "get-ip-v3" in proxy_url or "/ip/" in proxy_url:
+        try:
+            logger.info("Fetching dynamic proxy from Croxy API...")
+            # Menggunakan _client (koneksi langsung) ke API Croxy
+            resp = await _client.get(proxy_url, timeout=10)
+            if resp.status_code == 200:
+                ip_port = resp.text.strip()
+                if ip_port and ":" in ip_port:
+                    actual_proxy = f"http://{ip_port}"
+                    logger.info(f"Successfully fetched dynamic proxy from Croxy API: {actual_proxy}")
+                    return actual_proxy
+                else:
+                    logger.warning(f"Unexpected response from Croxy API: {resp.text}")
+            else:
+                logger.warning(f"Failed to fetch proxy from Croxy API, status: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error fetching dynamic proxy from Croxy API: {e}")
+        return None
+        
+    # 2. Proxy biasa dengan rotasi session
+    import urllib.parse
+    import random
+    import string
+    try:
+        parsed = urllib.parse.urlparse(proxy_url)
+        if parsed.username and parsed.password:
+            session_id = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+            username = parsed.username
+            if "-session-" in username:
+                base_username = username.split("-session-")[0]
+                new_username = f"{base_username}-session-{session_id}"
+            elif "_session_" in username:
+                base_username = username.split("_session_")[0]
+                new_username = f"{base_username}_session_{session_id}"
+            else:
+                new_username = f"{username}-session-{session_id}"
+            
+            netloc = f"{new_username}:{parsed.password}@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urllib.parse.urlunparse((
+                parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment
+            ))
+    except Exception as e:
+        logger.error(f"Error parsing static proxy URL session: {e}")
+        
+    return proxy_url
+
+
 
 
 async def verify_url(url: str) -> VerifResult:
@@ -161,43 +223,111 @@ async def verify_url(url: str) -> VerifResult:
         )
 
 
-async def check_leonardo_api_key(api_key: str) -> str:
+async def check_leonardo_api_key_credits(api_key: str) -> tuple[str, int | None]:
     """
-    Verifikasi keaktifan API Key Leonardo.ai secara async.
-    Mengecek keaktifan key dan memastikan sisa kredit/token > 0.
+    Memeriksa status dan sisa kredit/token API Key Leonardo.ai secara async.
+    Returns:
+        tuple[status_str, total_tokens_or_none]
     """
     if not api_key:
-        return ""
+        return "EXPIRED", 0
     url = "https://cloud.leonardo.ai/api/rest/v1/me"
     headers = {
         "accept": "application/json",
         "authorization": f"Bearer {api_key}"
     }
     try:
-        r = await _client.get(url, headers=headers, timeout=10)
+        active_proxy = await get_rotated_proxy_url(LEONARDO_PROXY_URL)
+        proxy_config = active_proxy if active_proxy else None
+        
+        async with httpx.AsyncClient(
+            proxy=proxy_config,
+            timeout=10.0,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+        ) as client:
+            r = await client.get(url, headers=headers)
+            
         if r.status_code == 200:
             try:
                 payload = r.json()
                 user_details = payload.get("user_details", [])
-                if user_details and isinstance(user_details, list):
-                    user_info = user_details[0]
-                    credits = user_info.get("apiCreditBalance", 0) or 0
-                    tokens = user_info.get("subscriptionTokens", 0) or 0
+                if user_details and isinstance(user_details, list) and len(user_details) > 0:
+                    details = user_details[0]
+                    subscription_tokens = details.get("subscriptionTokens") or 0
+                    paid_tokens = details.get("paidTokens") or 0
+                    api_paid_tokens = details.get("apiPaidTokens") or 0
+                    total_tokens = subscription_tokens + paid_tokens + api_paid_tokens
                     
-                    if credits <= 0 and tokens <= 0:
-                        logger.warning(f"[Verifier] API Key has no credits/tokens (credits={credits}, tokens={tokens})")
-                        return "EXPIRED"
-                return "ACTIVE"
+                    status_str = f"ACTIVE ({total_tokens} credits)" if total_tokens > 0 else f"EXPIRED ({total_tokens} credits)"
+                    return status_str, total_tokens
+                else:
+                    return "EXPIRED (no user details)", 0
             except Exception as e:
                 logger.error(f"[Verifier] Failed to parse Leonardo API response JSON: {e}")
-                return "ACTIVE"  # Fallback to active if response parsing fails but status is 200
+                # Fallback ke ACTIVE jika status 200 tapi gagal parsing (dianggap memiliki token agar tidak false negative)
+                return "ACTIVE (unknown credits)", 1
         elif r.status_code == 401:
-            return "EXPIRED"
+            return "EXPIRED (Unauthorized)", 0
         else:
-            return "EXPIRED"
+            return f"EXPIRED (Status {r.status_code})", 0
     except Exception as e:
         logger.error(f"[Verifier] API Key Check Error: {e}")
-        return f"FAILED (Error: {str(e)})"
+        return f"FAILED (Error: {type(e).__name__})", None
+
+
+async def check_leonardo_api_key(api_key: str) -> str:
+    """
+    Verifikasi keaktifan API Key Leonardo.ai secara async (legacy wrapper).
+    """
+    if not api_key:
+        return ""
+    status_str, _ = await check_leonardo_api_key_credits(api_key)
+    return status_str
+
+
+async def verify_stripe_and_credits(payment_url: str, api_key: str | None = None) -> tuple[VerifResult, str | None]:
+    """
+    Memverifikasi URL Stripe dan sisa kredit API Key Leonardo (jika ada).
+    Logika:
+      - Cek keaktifan link Stripe via verify_url.
+      - Cek sisa kredit API Key via check_leonardo_api_key_credits.
+      - Jika Stripe tidak aktif (is_ok = True) ATAU sisa kredit > 0, maka OK.
+      - Selain itu, GAGAL.
+    
+    Returns:
+        tuple[VerifResult, api_key_status]
+    """
+    stripe_result = await verify_url(payment_url)
+    
+    if not api_key:
+        return stripe_result, None
+
+    api_key_status, credits = await check_leonardo_api_key_credits(api_key)
+    
+    # Stripe error (is_ok) ATAU kredit > 0
+    if stripe_result.is_ok:
+        return stripe_result, api_key_status
+        
+    if credits is not None and credits > 0:
+        result = VerifResult(
+            status=VerifStatus.OK,
+            http_code=stripe_result.http_code or 200,
+            message=f"Leonardo API Key Aktif ({credits} kredit) -> Pembayaran Terkonfirmasi ✅",
+            url=payment_url
+        )
+        return result, api_key_status
+        
+    credits_str = str(credits) if credits is not None else "tidak diketahui"
+    result = VerifResult(
+        status=VerifStatus.HTTP_ERR,
+        http_code=stripe_result.http_code or 401,
+        message=f"Stripe masih aktif (belum dibayar) & Leonardo API Key tidak valid/habis ({credits_str} kredit) ❌",
+        url=payment_url
+    )
+    return result, api_key_status
+
 
 
 

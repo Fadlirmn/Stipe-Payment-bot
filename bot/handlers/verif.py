@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler
 import bot.db as fdb
 from bot.middlewares.auth import get_or_create_user, require_approved
 from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
-from bot.services.url_verifier import verify_url, check_leonardo_api_key, VerifResult, VerifStatus
+from bot.services.url_verifier import verify_url, check_leonardo_api_key, verify_stripe_and_credits, VerifResult, VerifStatus
 from bot.utils.keyboards import task_list_keyboard, url_action_keyboard, back_keyboard
 from bot.utils.formatters import progress_bar, now_wib, status_badge
 from bot.config import TZ
@@ -257,27 +257,7 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task = await fdb.get_task(task_id)
 
 
-    api_key_status = None
-    if api_key:
-        api_key_status = await check_leonardo_api_key(api_key)
-        if api_key_status == "ACTIVE":
-            result = VerifResult(
-                status=VerifStatus.OK,
-                http_code=200,
-                message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
-                url=payment_url
-            )
-        elif api_key_status == "EXPIRED":
-            result = VerifResult(
-                status=VerifStatus.HTTP_ERR,
-                http_code=401,
-                message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
-                url=payment_url
-            )
-        else:
-            result = await verify_url(payment_url)
-    else:
-        result = await verify_url(payment_url)
+    result, api_key_status = await verify_stripe_and_credits(payment_url, api_key)
 
     username = user.get("username")
     full_name = user.get("full_name")
@@ -784,27 +764,7 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     task = await fdb.get_task(task_id)
 
 
-    api_key_status = None
-    if api_key:
-        api_key_status = await check_leonardo_api_key(api_key)
-        if api_key_status == "ACTIVE":
-            result = VerifResult(
-                status=VerifStatus.OK,
-                http_code=200,
-                message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
-                url=payment_url
-            )
-        elif api_key_status == "EXPIRED":
-            result = VerifResult(
-                status=VerifStatus.HTTP_ERR,
-                http_code=401,
-                message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
-                url=payment_url
-            )
-        else:
-            result = await verify_url(payment_url)
-    else:
-        result = await verify_url(payment_url)
+    result, api_key_status = await verify_stripe_and_credits(payment_url, api_key)
 
     # Selalu update status + hitung submitted → warna 🟢/🔴 di list tetap muncul
     db_update = {
@@ -982,27 +942,7 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         # 2. Verifikasi URL / API Key
         api_key = url_obj.get("api_key", "")
-        api_key_status = None
-        if api_key:
-            api_key_status = await check_leonardo_api_key(api_key)
-            if api_key_status == "ACTIVE":
-                result = VerifResult(
-                    status=VerifStatus.OK,
-                    http_code=200,
-                    message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
-                    url=payment_url
-                )
-            elif api_key_status == "EXPIRED":
-                result = VerifResult(
-                    status=VerifStatus.HTTP_ERR,
-                    http_code=401,
-                    message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
-                    url=payment_url
-                )
-            else:
-                result = await verify_url(payment_url)
-        else:
-            result = await verify_url(payment_url)
+        result, api_key_status = await verify_stripe_and_credits(payment_url, api_key)
             
         # 3. Update status verifikasi di DB
         db_update = {

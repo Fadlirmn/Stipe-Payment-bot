@@ -39,4 +39,7 @@ SHEET_NOTE_COLUMN = "Notes"
 # ── Dashboard URL ─────────────────────────────────────────
 DASHBOARD_URL: str = os.getenv("DASHBOARD_URL", "https://stipe-payment-bot.vercel.app/")
 
+LEONARDO_PROXY_URL: str | None = os.getenv("PROXY_URL") or os.getenv("RESIDENTIAL_PROXY_URL") or None
+
+
 

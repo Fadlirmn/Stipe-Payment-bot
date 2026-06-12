@@ -137,7 +137,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
     }
     """
     import bot.db as fdb
-    from bot.services.url_verifier import verify_url, check_leonardo_api_key, VerifResult, VerifStatus
+    from bot.services.url_verifier import verify_url, check_leonardo_api_key, verify_stripe_and_credits, VerifResult, VerifStatus
     from bot.utils.formatters import now_wib
     import asyncio
 
@@ -211,27 +211,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
 
         async with sem:
             try:
-                api_key_status = None
-                if api_key:
-                    api_key_status = await check_leonardo_api_key(api_key)
-                    if api_key_status == "ACTIVE":
-                        result = VerifResult(
-                            status=VerifStatus.OK,
-                            http_code=200,
-                            message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
-                            url=payment_url
-                        )
-                    elif api_key_status == "EXPIRED":
-                        result = VerifResult(
-                            status=VerifStatus.HTTP_ERR,
-                            http_code=401,
-                            message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
-                            url=payment_url
-                        )
-                    else:
-                        result = await verify_url(payment_url)
-                else:
-                    result = await verify_url(payment_url)
+                result, api_key_status = await verify_stripe_and_credits(payment_url, api_key)
 
                 db_update = {
                     "status":      result.status.value,
