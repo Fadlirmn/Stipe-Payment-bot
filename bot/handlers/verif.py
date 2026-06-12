@@ -108,8 +108,31 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             logger.warning(f"[Sync] Row date {row_date} does not match target_date {target_date}. Skipping.")
             continue
 
+        # Cek status assignment dari Google Sheets
+        sheet_status = row.get("status", "")
+        assigned_user_id = None
+        if sheet_status and sheet_status.startswith("ASSIGNED"):
+            # Format: "ASSIGNED - @username"
+            parts = sheet_status.split("-")
+            if len(parts) > 1:
+                uname = parts[1].strip()
+                user_obj = await fdb.get_user_by_username(uname)
+                if user_obj:
+                    assigned_user_id = str(user_obj["user_id"])
+
         doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
+        
         if existing_ids is not None and doc_id in existing_ids:
+            # Jika baris sudah ada di DB, sinkronkan info assignment jika masih PENDING/PROCESSING di DB
+            if assigned_user_id:
+                db_url = await fdb.get_sheet_url(doc_id)
+                if db_url and db_url.get("status") in ("PENDING", "PROCESSING") and db_url.get("verified_by") != assigned_user_id:
+                    await fdb.update_sheet_url(
+                        doc_id,
+                        status="PROCESSING",
+                        verified_by=assigned_user_id,
+                        assigned_at=now_wib().isoformat()
+                    )
             continue
 
         await fdb.add_sheet_url(
@@ -121,6 +144,15 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             api_key=row.get("api_key", ""),
             check_exists=(existing_ids is None),
         )
+        
+        # Jika baru masuk dan sudah berstatus ASSIGNED di Sheets
+        if assigned_user_id:
+            await fdb.update_sheet_url(
+                doc_id,
+                status="PROCESSING",
+                verified_by=assigned_user_id,
+                assigned_at=now_wib().isoformat()
+            )
         count += 1
     return count, None
 

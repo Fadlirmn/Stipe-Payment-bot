@@ -65,9 +65,10 @@ function doGet(e) {
         continue;
       }
 
-      // Skip baris yang sudah punya status (sudah diverifikasi)
-      if (currentStatus) {
-        if (isDebug) debugInfo.push({ row: i + 1, reason: "status is not empty: " + currentStatus });
+      // Skip baris yang sudah punya status verifikasi final (OK/HTTP_ERR/SKIPPED/dll.)
+      // Jangan skip baris yang berstatus ASSIGNED karena masih harus diverifikasi oleh staff
+      if (currentStatus && !/^ASSIGNED/i.test(currentStatus)) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "status is final: " + currentStatus });
         continue;
       }
 
@@ -88,6 +89,7 @@ function doGet(e) {
         api_key:     String(row[COL_API_KEY]     || "").trim(),
         payment_url: rawUrl,
         notes:       "",
+        status:      currentStatus,
         date:        formatted,
         timestamp:   String(rawTs),
         row_index:   i + 1  // 1-based, berguna jika bot perlu update status nanti

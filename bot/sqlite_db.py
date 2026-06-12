@@ -132,6 +132,18 @@ def sqlite_get_user(user_id: int) -> dict | None:
     return row
 
 
+def sqlite_get_user_by_username(username: str) -> dict | None:
+    if not username:
+        return None
+    clean_username = username.lstrip("@").strip()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ? OR username = ?", (username, clean_username))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
 def sqlite_create_user(user_id: int, username: str, full_name: str, role: str = "pending") -> dict:
     from bot.config import TZ
     joined_at = datetime.now(TZ).isoformat()

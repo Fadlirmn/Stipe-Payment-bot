@@ -13,6 +13,9 @@ async def init_db():
 async def get_user(user_id: int) -> dict | None:
     return await asyncio.to_thread(pgdb.postgres_get_user, user_id)
 
+async def get_user_by_username(username: str) -> dict | None:
+    return await asyncio.to_thread(pgdb.postgres_get_user_by_username, username)
+
 async def create_user(user_id: int, username: str, full_name: str, role: str = "pending") -> dict:
     return await asyncio.to_thread(pgdb.postgres_create_user, user_id, username, full_name, role)
 
