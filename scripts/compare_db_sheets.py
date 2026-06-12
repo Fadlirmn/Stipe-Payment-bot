@@ -16,6 +16,14 @@ from psycopg2.extras import RealDictCursor
 load_dotenv()
 
 PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
+# Fallback ke localhost jika host.docker.internal tidak ter-resolve (karena berjalan non-docker di host VPS)
+if PG_HOST == "host.docker.internal":
+    import socket
+    try:
+        socket.gethostbyname(PG_HOST)
+    except socket.gaierror:
+        PG_HOST = "127.0.0.1"
+
 PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 PG_DB = os.getenv("POSTGRES_DB", "stripe_verif")
 PG_USER = os.getenv("POSTGRES_USER", "postgres")
