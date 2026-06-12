@@ -1,5 +1,29 @@
 # Decision Log
 
+## [2026-06-12] - Reconcile & Re-verify Failed URLs, Menu Cleanup, and Bugfixes
+
+### Context
+1. Telegram callback data length is limited to 64 bytes, causing crashes on retry clicks when using long task IDs.
+2. `NameError` on `logger` caused crashes during admin actions when an error occurred.
+3. Backup/restore manual options are no longer desired in the Telegram UI.
+4. Need periodic auto-verification of failed URLs referencing status changes in Google Sheets (reconciliation).
+
+### Decisions
+1. **Shorten Retry Callback Data**:
+   - *Decision*: Remove `task_id` from the `callback_data` payload for retry actions and load it dynamically from the database using `doc_id`.
+   - *Rationale*: Keeps the payload length ~45 characters (safely below 64-byte limit) while maintaining exact query capabilities.
+2. **Periodic Re-verification Job**:
+   - *Decision*: Set up a background job `job_auto_verify_failed` in `scheduler.py` running every 15 minutes.
+   - *Rationale*: Periodically reconciles local failed URLs with active Google Sheets status to sync updates automatically.
+3. **Pembersihan Menu DevTools**:
+   - *Decision*: Remove Backup and Restore buttons from the inline keyboard `cb_menu_devtools`.
+   - *Rationale*: Clean up UI options as requested by the user.
+4. **Fix NameError and Logger**:
+   - *Decision*: Import `logger` from `loguru` in `bot/handlers/admin.py`.
+   - *Rationale*: Prevents crashes when errors/warnings are being logged in admin callbacks.
+
+---
+
 ## [2026-06-12] - Task Quota Sync Implementation
 
 ### Context

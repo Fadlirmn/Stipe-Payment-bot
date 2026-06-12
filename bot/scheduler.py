@@ -87,6 +87,24 @@ async def job_local_backup():
         logger.error(f"[Scheduler] {msg}")
 
 
+async def job_auto_verify_failed(app):
+    from datetime import timezone
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+    logger.info(f"[Scheduler] Starting auto-verify failed URLs for {today_utc} UTC")
+    
+    try:
+        from bot.services.sheet_parser import reconcile_and_verify_failed_urls
+        res = await reconcile_and_verify_failed_urls(today_utc)
+        logger.info(
+            f"[Scheduler] Auto-verify finished: total={res['total_failed']}, "
+            f"reconciled_ok={res['sync_ok_count']}, "
+            f"reverif_ok={res['reverif_ok']}, "
+            f"reverif_fail={res['reverif_fail']}"
+        )
+    except Exception as e:
+        logger.error(f"[Scheduler] Auto-verify failed job error: {e}")
+
+
 def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=str(TZ))
 
@@ -107,11 +125,19 @@ def setup_scheduler(app) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        job_auto_verify_failed,
+        CronTrigger(minute="*/15", timezone=TZ),
+        args=[app],
+        id="auto_verify_failed",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         job_local_backup,
         CronTrigger(hour="*/3", timezone=TZ),
         id="local_backup",
         replace_existing=True,
     )
 
-    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m), local_backup (every 3h)")
+    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m), auto_verify_failed (every 15m), local_backup (every 3h)")
     return scheduler

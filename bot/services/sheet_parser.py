@@ -120,3 +120,178 @@ async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "She
         return False
 
 
+async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optional[int] = None) -> dict:
+    """
+    Melakukan verifikasi ulang terhadap URL yang gagal di database dengan mengacu pada Google Sheets.
+    Jika URL gagal di DB ternyata sudah tidak ada di baris pending Google Sheets (artinya sudah sukses/OK di Sheets),
+    maka status di DB di-update menjadi OK (reconciled).
+    Jika masih ada di Google Sheets, maka dilakukan re-verifikasi secara berkala.
+    
+    Mengembalikan dict rangkuman hasil:
+    {
+        "already_done_count": int,
+        "sync_ok_count": int,
+        "reverif_ok": int,
+        "reverif_fail": int,
+        "total_failed": int
+    }
+    """
+    import bot.db as fdb
+    from bot.services.url_verifier import verify_url, check_leonardo_api_key, VerifResult, VerifStatus
+    from bot.utils.formatters import now_wib
+    import asyncio
+
+    logger.info(f"[Reconciler] Memulai rekonsiliasi & re-verifikasi untuk tanggal {target_date_utc} UTC")
+
+    # 1. Ambil semua task aktif
+    all_tasks = await fdb.list_tasks()
+    task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
+
+    # 2. Ambil pending URLs dari Google Sheets (untuk semua tab aktif)
+    sheet_pending_urls = set()
+    tabs_seen = set()
+    for task in all_tasks:
+        tab = task.get("sheet_tab", "Sheet1")
+        if tab in tabs_seen:
+            continue
+        tabs_seen.add(tab)
+        try:
+            # fetch_today_urls mengembalikan baris yang belum final status
+            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_utc))
+            for r in rows:
+                sheet_pending_urls.add(r["payment_url"].strip())
+        except Exception as e:
+            logger.warning(f"[Reconciler] Gagal fetch tab '{tab}' dari Sheets: {e}")
+
+    # 3. Ambil URL failed dari DB
+    failed_urls = await fdb.get_all_failed_urls(date_str=target_date_utc)
+    if not failed_urls:
+        logger.info(f"[Reconciler] Tidak ada URL gagal di DB untuk tanggal {target_date_utc}")
+        return {
+            "already_done_count": 0,
+            "sync_ok_count": 0,
+            "reverif_ok": 0,
+            "reverif_fail": 0,
+            "total_failed": 0
+        }
+
+    # Pisahkan URL
+    already_done = []
+    need_reverif = []
+    for u in failed_urls:
+        purl = u.get("payment_url", "").strip()
+        if purl and purl not in sheet_pending_urls:
+            already_done.append(u)
+        else:
+            need_reverif.append(u)
+
+    # 4. Update DB untuk yang sudah disubmit di Sheets -> reset ke OK
+    sync_ok_count = 0
+    for u in already_done:
+        try:
+            await fdb.update_sheet_url(u["id"], status="OK", error_msg=None,
+                                       verified_at=now_wib().isoformat())
+            sync_ok_count += 1
+        except Exception as e:
+            logger.warning(f"[Reconciler] Gagal sync-reset {u['payment_url']}: {e}")
+
+    # 5. Re-verifikasi yang masih pending
+    sem = asyncio.Semaphore(5)
+    reverif_ok = 0
+    reverif_fail = 0
+
+    async def re_verify_one(url_obj: dict):
+        nonlocal reverif_ok, reverif_fail
+        payment_url = url_obj["payment_url"]
+        doc_id      = url_obj["id"]
+        task_id     = url_obj["task_id"]
+        tab         = task_tab_map.get(task_id, "Sheet1")
+        api_key     = url_obj.get("api_key", "")
+
+        async with sem:
+            try:
+                api_key_status = None
+                if api_key:
+                    api_key_status = await check_leonardo_api_key(api_key)
+                    if api_key_status == "ACTIVE":
+                        result = VerifResult(
+                            status=VerifStatus.OK,
+                            http_code=200,
+                            message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
+                            url=payment_url
+                        )
+                    elif api_key_status == "EXPIRED":
+                        result = VerifResult(
+                            status=VerifStatus.HTTP_ERR,
+                            http_code=401,
+                            message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
+                            url=payment_url
+                        )
+                    else:
+                        result = await verify_url(payment_url)
+                else:
+                    result = await verify_url(payment_url)
+
+                db_update = {
+                    "status":      result.status.value,
+                    "http_code":   result.http_code,
+                    "error_msg":   result.message if not result.is_ok else None,
+                    "verified_at": now_wib().isoformat(),
+                }
+                if api_key:
+                    db_update["api_key_status"] = api_key_status
+                await fdb.update_sheet_url(doc_id, **db_update)
+
+                try:
+                    await update_sheet_status(
+                        payment_url, result.status.value,
+                        tab_name=tab, staff_info="System-AutoReVerify"
+                    )
+                except Exception as e:
+                    logger.error(f"[Reconciler] Gagal update Sheet untuk {payment_url}: {e}")
+
+                if actor_id:
+                    await fdb.add_audit_log(
+                        actor_id=actor_id, action="url.reverify",
+                        target_type="sheet_url", target_id=doc_id,
+                        detail={"url": payment_url, "status": result.status.value,
+                                "http_code": result.http_code},
+                    )
+
+                if result.is_ok:
+                    reverif_ok += 1
+                    if url_obj.get("verified_by"):
+                        try:
+                            staff_id = int(url_obj["verified_by"])
+                            await fdb.upsert_progress(
+                                task_id=task_id, user_id=staff_id,
+                                date=url_obj["date"],
+                                submitted_delta=0, ok_delta=1, fail_delta=-1
+                            )
+                        except Exception as e:
+                            logger.error(f"[Reconciler] Gagal update progress: {e}")
+                else:
+                    reverif_fail += 1
+
+            except Exception as ex:
+                logger.error(f"[Reconciler] Error memproses {payment_url}: {ex}")
+                reverif_fail += 1
+
+    if need_reverif:
+        await asyncio.gather(*(re_verify_one(u) for u in need_reverif), return_exceptions=True)
+
+    logger.info(
+        f"[Reconciler] Selesai rekonsiliasi & re-verifikasi untuk {target_date_utc}. "
+        f"Already done: {len(already_done)}, Synced to OK: {sync_ok_count}, "
+        f"Re-verified OK: {reverif_ok}, Re-verified Fail: {reverif_fail}"
+    )
+
+    return {
+        "already_done_count": len(already_done),
+        "sync_ok_count": sync_ok_count,
+        "reverif_ok": reverif_ok,
+        "reverif_fail": reverif_fail,
+        "total_failed": len(failed_urls)
+    }
+
+

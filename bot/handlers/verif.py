@@ -340,7 +340,7 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # ❌ Gagal — tampilkan hasil + opsi verif ulang (status sudah 🔴 di DB)
         retry_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Verif Ulang", callback_data=f"url:retry:{doc_id}:{task_id}:auto")],
+            [InlineKeyboardButton("🔄 Verif Ulang", callback_data=f"url:retry:{doc_id}:auto")],
             [InlineKeyboardButton("⏭️ URL Berikutnya", callback_data=f"task:start_verif:{task_id}")],
             [InlineKeyboardButton("🔙 Kembali", callback_data="menu:verif")],
         ])
@@ -852,7 +852,7 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         # ❌ Gagal — status 🔴 sudah tersimpan, tampilkan hasil + opsi verif ulang
         retry_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Verif Ulang", callback_data=f"url:retry:{doc_id}:{task_id}:list:{page}")],
+            [InlineKeyboardButton("🔄 Verif Ulang", callback_data=f"url:retry:{doc_id}:list:{page}")],
             [InlineKeyboardButton("📋 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")],
         ])
         await update.callback_query.message.reply_text(
@@ -1081,11 +1081,10 @@ async def cb_url_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reset URL gagal kembali ke PROCESSING untuk verif ulang."""
     await update.callback_query.answer("🔄 Menyiapkan verifikasi ulang...")
     parts = update.callback_query.data.split(":")
-    # Format: url:retry:{doc_id}:{task_id}:{flow}  atau  url:retry:{doc_id}:{task_id}:list:{page}
-    doc_id  = parts[2]
-    task_id = parts[3]
-    flow    = parts[4] if len(parts) > 4 else "auto"
-    page    = int(parts[5]) if len(parts) > 5 else 1
+    # Format baru: url:retry:{doc_id}:{flow}  atau  url:retry:{doc_id}:{flow}:{page}
+    doc_id = parts[2]
+    flow   = parts[3] if len(parts) > 3 else "auto"
+    page   = int(parts[4]) if len(parts) > 4 else 1
 
     user = await get_or_create_user(update)
     today = datetime.now(TZ).date().isoformat()
@@ -1094,6 +1093,8 @@ async def cb_url_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not url_obj:
         await update.callback_query.message.reply_text("❌ URL tidak ditemukan.")
         return
+
+    task_id = url_obj["task_id"]
 
     # Reset status kembali ke PROCESSING agar bisa diverif ulang
     # Kurangi fail_delta & submitted_delta yang sudah dihitung sebelumnya
