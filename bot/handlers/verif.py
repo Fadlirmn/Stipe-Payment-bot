@@ -262,74 +262,90 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     result = await verify_url(payment_url)
-    
+
     api_key_status = None
     if api_key:
         api_key_status = await check_leonardo_api_key(api_key)
 
-    db_update = {
-        "status": result.status.value,
-        "http_code": result.http_code,
-        "error_msg": result.message if not result.is_ok else None,
-        "verified_by": user["user_id"],
-        "verified_at": now_wib().isoformat(),
-    }
-    if api_key:
-        db_update["api_key_status"] = api_key_status
-    await fdb.update_sheet_url(doc_id, **db_update)
-
-    # Update status ke Google Sheet (non-blocking background task)
     username = user.get("username")
     full_name = user.get("full_name")
     staff_str = f"@{username}" if username else (full_name if full_name else str(user["user_id"]))
     task = await fdb.get_task(task_id)
     tab = task.get("sheet_tab", "Sheet1") if task else "Sheet1"
-    
-    async def bg_update_verify():
-        try:
-            await update_sheet_status(
-                payment_url,
-                result.status.value,
-                tab_name=tab,
-                staff_info=staff_str
-            )
-        except Exception as e:
-            logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify: {e}")
-    asyncio.create_task(bg_update_verify())
 
-    # Progress tetap dicatat di database untuk ditampilkan di dashboard/laporan
+    if result.is_ok:
+        # ✅ Sukses — update status, hitung progress, lanjut ke URL berikutnya
+        db_update = {
+            "status": result.status.value,
+            "http_code": result.http_code,
+            "error_msg": None,
+            "verified_by": user["user_id"],
+            "verified_at": now_wib().isoformat(),
+        }
+        if api_key:
+            db_update["api_key_status"] = api_key_status
+        await fdb.update_sheet_url(doc_id, **db_update)
 
-    await fdb.upsert_progress(
-        task_id=task_id, user_id=user["user_id"], date=today,
-        submitted_delta=1,
-        ok_delta=1 if result.is_ok else 0,
-        fail_delta=0 if result.is_ok else 1,
-    )
+        async def bg_update_ok():
+            try:
+                await update_sheet_status(payment_url, result.status.value,
+                                          tab_name=tab, staff_info=staff_str)
+            except Exception as e:
+                logger.error(f"[SheetUpdate] Gagal update sheet verify OK: {e}")
+        asyncio.create_task(bg_update_ok())
 
-    await fdb.add_audit_log(
-        actor_id=user["user_id"], action="url.verify",
-        target_type="sheet_url", target_id=doc_id,
-        detail={"url": payment_url, "status": result.status.value,
-                "http_code": result.http_code},
-    )
+        await fdb.upsert_progress(
+            task_id=task_id, user_id=user["user_id"], date=today,
+            submitted_delta=1, ok_delta=1, fail_delta=0,
+        )
+        await fdb.add_audit_log(
+            actor_id=user["user_id"], action="url.verify",
+            target_type="sheet_url", target_id=doc_id,
+            detail={"url": payment_url, "status": result.status.value,
+                    "http_code": result.http_code},
+        )
 
-    api_info_str = ""
-    if api_key:
-        masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
-        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
-        api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+        api_info_str = ""
+        if api_key:
+            masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+            api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+            api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
 
-    await update.callback_query.message.reply_text(
-        f"{result.emoji} *Hasil Verifikasi*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Status : {status_badge(result.status.value)}\n"
-        f"HTTP   : {result.http_code or '-'}\n"
-        f"Pesan  : {result.message}\n"
-        f"{api_info_str}"
-        f"URL    : `{payment_url[:60]}...`",
-        parse_mode="Markdown",
-    )
-    await _show_next_pending_url(update, context, task_id, user["user_id"], today)
+        await update.callback_query.message.reply_text(
+            f"{result.emoji} *Hasil Verifikasi*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Status : {status_badge(result.status.value)}\n"
+            f"HTTP   : {result.http_code or '-'}\n"
+            f"Pesan  : {result.message}\n"
+            f"{api_info_str}"
+            f"URL    : `{payment_url[:60]}...`",
+            parse_mode="Markdown",
+        )
+        await _show_next_pending_url(update, context, task_id, user["user_id"], today)
+
+    else:
+        # ❌ Gagal — JANGAN ubah status, jangan hitung progress
+        # Tetap PROCESSING → URL muncul lagi untuk retry
+        api_info_str = ""
+        if api_key:
+            masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+            api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+            api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+
+        await update.callback_query.message.reply_text(
+            f"{result.emoji} *Hasil Verifikasi — GAGAL*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Status : {status_badge(result.status.value)}\n"
+            f"HTTP   : {result.http_code or '-'}\n"
+            f"Pesan  : {result.message}\n"
+            f"{api_info_str}"
+            f"URL    : `{payment_url[:60]}...`\n\n"
+            f"⚠️ URL ini *belum dihitung* karena verifikasi gagal.\n"
+            f"Silakan coba verifikasi ulang atau lewati.",
+            parse_mode="Markdown",
+        )
+        # Tampilkan URL yang sama lagi (masih PROCESSING)
+        await _show_next_pending_url(update, context, task_id, user["user_id"], today)
 
 
 async def cb_url_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -742,53 +758,73 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
     result = await verify_url(payment_url)
-    
+
     api_key_status = None
     if api_key:
         api_key_status = await check_leonardo_api_key(api_key)
 
-    db_update = {
-        "status": result.status.value,
-        "http_code": result.http_code,
-        "error_msg": result.message if not result.is_ok else None,
-        "verified_by": user["user_id"],
-        "verified_at": now_wib().isoformat(),
-    }
-    if api_key:
-        db_update["api_key_status"] = api_key_status
-    await fdb.update_sheet_url(doc_id, **db_update)
+    if result.is_ok:
+        # ✅ Sukses — update status, hitung progress
+        db_update = {
+            "status": result.status.value,
+            "http_code": result.http_code,
+            "error_msg": None,
+            "verified_by": user["user_id"],
+            "verified_at": now_wib().isoformat(),
+        }
+        if api_key:
+            db_update["api_key_status"] = api_key_status
+        await fdb.update_sheet_url(doc_id, **db_update)
 
-    await fdb.upsert_progress(
-        task_id=task_id, user_id=user["user_id"], date=today,
-        submitted_delta=1,
-        ok_delta=1 if result.is_ok else 0,
-        fail_delta=0 if result.is_ok else 1,
-    )
+        await fdb.upsert_progress(
+            task_id=task_id, user_id=user["user_id"], date=today,
+            submitted_delta=1, ok_delta=1, fail_delta=0,
+        )
+        await fdb.add_audit_log(
+            actor_id=user["user_id"], action="url.verify",
+            target_type="sheet_url", target_id=doc_id,
+            detail={"url": payment_url, "status": result.status.value,
+                    "http_code": result.http_code},
+        )
 
-    await fdb.add_audit_log(
-        actor_id=user["user_id"], action="url.verify",
-        target_type="sheet_url", target_id=doc_id,
-        detail={"url": payment_url, "status": result.status.value,
-                "http_code": result.http_code},
-    )
+        api_info_str = ""
+        if api_key:
+            masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+            api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+            api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
 
-    api_info_str = ""
-    if api_key:
-        masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
-        api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
-        api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+        await update.callback_query.message.reply_text(
+            f"{result.emoji} *Hasil Verifikasi*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Status : {status_badge(result.status.value)}\n"
+            f"HTTP   : {result.http_code or '-'}\n"
+            f"Pesan  : {result.message}\n"
+            f"{api_info_str}",
+            parse_mode="Markdown",
+        )
+        await _show_url_list(update, context, task_id, today, page)
 
-    await update.callback_query.message.reply_text(
-        f"{result.emoji} *Hasil Verifikasi*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Status : {status_badge(result.status.value)}\n"
-        f"HTTP   : {result.http_code or '-'}\n"
-        f"Pesan  : {result.message}\n"
-        f"{api_info_str}",
-        parse_mode="Markdown",
-    )
-    
-    await _show_url_list(update, context, task_id, today, page)
+    else:
+        # ❌ Gagal — JANGAN ubah status, jangan hitung progress
+        # URL tetap PROCESSING dan bisa diverif ulang dari list
+        api_info_str = ""
+        if api_key:
+            masked_api = api_key[:6] + "..." + api_key[-6:] if len(api_key) > 12 else api_key
+            api_badge = "🟢 ACTIVE" if api_key_status == "ACTIVE" else f"🔴 {api_key_status}"
+            api_info_str = f"API Key: `{masked_api}`\nStatus API: {api_badge}\n"
+
+        await update.callback_query.message.reply_text(
+            f"{result.emoji} *Hasil Verifikasi — GAGAL*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Status : {status_badge(result.status.value)}\n"
+            f"HTTP   : {result.http_code or '-'}\n"
+            f"Pesan  : {result.message}\n"
+            f"{api_info_str}"
+            f"⚠️ URL *belum dihitung*, silakan coba verifikasi ulang atau lewati.",
+            parse_mode="Markdown",
+        )
+        # Kembali ke list — URL masih PROCESSING dan bisa diverif ulang
+        await _show_url_list(update, context, task_id, today, page)
 
 
 async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
