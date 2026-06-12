@@ -372,7 +372,6 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
 
                 # Update ke Google Sheets
                 try:
-                    await update_sheet_status(payment_url, f"ASSIGNED - {actor_str}", tab_name=tab, staff_info=actor_str)
                     await update_sheet_status(payment_url, result.status.value, tab_name=tab, staff_info=actor_str)
                 except Exception as e:
                     logger.warning(f"[VerifyAll] Gagal update status Sheets untuk {payment_url}: {e}")

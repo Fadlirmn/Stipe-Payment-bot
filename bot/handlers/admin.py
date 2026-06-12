@@ -1217,11 +1217,7 @@ async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT
 
                 async with sem:
                     try:
-                        # 1. Tulis info ASSIGNED dulu ke Kolom F (Assigned By) via Google Sheets logic
-                        assign_status = f"ASSIGNED - {staff_str}"
-                        await update_sheet_status(purl, assign_status, tab_name=tab, staff_info=staff_str)
-
-                        # 2. Tulis status final (OK / HTTP_ERR / dll.) ke Kolom G & H (Verified By)
+                        # Tulis status final (OK / HTTP_ERR / dll.) ke Kolom F & H (Verified By)
                         ok = await update_sheet_status(purl, status, tab_name=tab, staff_info=staff_str)
                         if ok:
                             total_pushed += 1
