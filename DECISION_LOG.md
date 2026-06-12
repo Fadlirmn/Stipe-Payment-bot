@@ -12,13 +12,16 @@
 1. **Shorten Retry Callback Data**:
    - *Decision*: Remove `task_id` from the `callback_data` payload for retry actions and load it dynamically from the database using `doc_id`.
    - *Rationale*: Keeps the payload length ~45 characters (safely below 64-byte limit) while maintaining exact query capabilities.
-2. **Periodic Re-verification Job**:
+2. Periodic Re-verification Job:
    - *Decision*: Set up a background job `job_auto_verify_failed` in `scheduler.py` running every 15 minutes.
    - *Rationale*: Periodically reconciles local failed URLs with active Google Sheets status to sync updates automatically.
-3. **Pembersihan Menu DevTools**:
+3. Timeout & Error Propagation in Reconciliation:
+   - *Decision*: Raise an exception immediately and fail the reconciler if Google Sheets fetch fails, and increase `HTTP_TIMEOUT` to 30.0 seconds.
+   - *Rationale*: Prevents database corruption (all database fails incorrectly marked OK when Sheets query times out) and allows slow Apps Script calls to complete safely.
+4. Pembersihan Menu DevTools:
    - *Decision*: Remove Backup and Restore buttons from the inline keyboard `cb_menu_devtools`.
    - *Rationale*: Clean up UI options as requested by the user.
-4. **Fix NameError and Logger**:
+5. Fix NameError and Logger:
    - *Decision*: Import `logger` from `loguru` in `bot/handlers/admin.py`.
    - *Rationale*: Prevents crashes when errors/warnings are being logged in admin callbacks.
 
