@@ -34,7 +34,13 @@ async def main():
     
     restored_count = 0
     for row in rows:
-        doc_id, task_id, payment_url, status, verified_by_id, tab = row
+        doc_id = row["id"]
+        task_id = row["task_id"]
+        payment_url = row["payment_url"]
+        status = row["status"]
+        verified_by_id = row["verified_by"]
+        tab = row["sheet_tab"]
+        
         if not verified_by_id:
             print(f"Skipping (no verifier ID): {payment_url}")
             continue
@@ -45,7 +51,8 @@ async def main():
         
         staff_str = "System-Restore"
         if user_row:
-            username, full_name = user_row
+            username = user_row["username"]
+            full_name = user_row["full_name"]
             staff_str = f"@{username}" if username else (full_name if full_name else str(verified_by_id))
             
         print(f"Processing URL: {payment_url} -> Verified by: {staff_str} (Status: {status})")
