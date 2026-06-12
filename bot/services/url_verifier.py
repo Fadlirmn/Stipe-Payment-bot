@@ -71,6 +71,7 @@ def _check_domain(url: str) -> bool:
 _client = httpx.AsyncClient(
     follow_redirects=True,
     timeout=8.0,   # link expired biasanya langsung error, tidak perlu tunggu lama
+    limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
@@ -163,6 +164,7 @@ async def verify_url(url: str) -> VerifResult:
 async def check_leonardo_api_key(api_key: str) -> str:
     """
     Verifikasi keaktifan API Key Leonardo.ai secara async.
+    Hanya mengecek aktif/tidaknya key (bisa dipakai/tidak).
     """
     if not api_key:
         return ""
@@ -174,23 +176,15 @@ async def check_leonardo_api_key(api_key: str) -> str:
     try:
         r = await _client.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            user_details = data.get("user_details", [])
-            total_tokens = 0
-            if user_details:
-                detail = user_details[0]
-                sub_tokens = detail.get("subscriptionTokens") or 0
-                paid_tokens = detail.get("paidTokens") or 0
-                api_paid_tokens = detail.get("apiPaidTokens") or 0
-                total_tokens = sub_tokens + paid_tokens + api_paid_tokens
-            return f"ACTIVE ({total_tokens} tokens)"
+            return "ACTIVE"
         elif r.status_code == 401:
             return "EXPIRED"
         else:
-            return f"FAILED (HTTP {r.status_code})"
+            return "EXPIRED"
     except Exception as e:
         logger.error(f"[Verifier] API Key Check Error: {e}")
         return f"FAILED (Error: {str(e)})"
+
 
 
 

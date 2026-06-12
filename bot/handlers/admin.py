@@ -960,7 +960,7 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from bot.services.sheet_parser import fetch_today_urls, update_sheet_status
-        from bot.services.url_verifier import verify_url
+        from bot.services.url_verifier import verify_url, check_leonardo_api_key, VerifResult, VerifStatus
 
         # ── LANGKAH 1: Ambil semua task aktif untuk mengetahui tab name ────────
         all_tasks = await fdb.list_tasks()   # [{id, sheet_tab, ...}]
@@ -1041,10 +1041,31 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
             doc_id      = url_obj["id"]
             task_id     = url_obj["task_id"]
             tab         = task_tab_map.get(task_id, "Sheet1")
+            api_key     = url_obj.get("api_key", "")
 
             async with sem:
                 try:
-                    result = await verify_url(payment_url)
+                    api_key_status = None
+                    if api_key:
+                        api_key_status = await check_leonardo_api_key(api_key)
+                        if api_key_status == "ACTIVE":
+                            result = VerifResult(
+                                status=VerifStatus.OK,
+                                http_code=200,
+                                message="Leonardo API Key Aktif -> Pembayaran Terkonfirmasi ✅",
+                                url=payment_url
+                            )
+                        elif api_key_status == "EXPIRED":
+                            result = VerifResult(
+                                status=VerifStatus.HTTP_ERR,
+                                http_code=401,
+                                message="Leonardo API Key Expired/Unverified -> Stripe Belum Dibayar ❌",
+                                url=payment_url
+                            )
+                        else:
+                            result = await verify_url(payment_url)
+                    else:
+                        result = await verify_url(payment_url)
 
                     db_update = {
                         "status":      result.status.value,
@@ -1052,6 +1073,8 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "error_msg":   result.message if not result.is_ok else None,
                         "verified_at": now_wib().isoformat(),
                     }
+                    if api_key:
+                        db_update["api_key_status"] = api_key_status
                     await fdb.update_sheet_url(doc_id, **db_update)
 
                     try:
