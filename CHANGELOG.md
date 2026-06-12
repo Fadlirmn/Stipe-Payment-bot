@@ -18,5 +18,7 @@ All notable changes to this project will be documented in this file.
 - `[Changed]` Excluded admin and dev roles from quota limit enforcement so they can always view and verify links.
 - `[Changed]` Excluded copying of active keys to Sheet 2 during Stripe URL check flow; copying is now restricted exclusively to the manual `Check API Keys` action.
 - `[Changed]` `check_leonardo_api_key` in `services/url_verifier.py` to check token details without writing directly to Sheet 2.
+- `[Changed]` Updated the message text styling and layout of `cb_menu_devtools` in `bot/handlers/admin.py` to display descriptions for User Management, Task & Synchronization, and Verification & Database tools.
+
 
 
