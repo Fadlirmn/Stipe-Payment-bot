@@ -491,12 +491,12 @@ async function loadStaff(d) {
   // Group URLs by assigned staff (assigned_to = immutable field, tidak ditimpa oleh verify_all)
   const byUser = {};
   for (const u of urls) {
-    const uid = String(u.assigned_to || u.verified_by || '');
+    const uid = String(u.assigned_to || '');
     if (!uid) continue;
-    if (!byUser[uid]) byUser[uid] = { total: 0, ok: 0, pending: 0 };
+    if (!byUser[uid]) byUser[uid] = { total: 0, ok: 0, fail: 0 };
     byUser[uid].total++;
     if (u.status === 'OK') byUser[uid].ok++;
-    else if (u.status === 'PENDING' || u.status === 'PROCESSING') byUser[uid].pending++;
+    else byUser[uid].fail++;
   }
 
   // Sort by OK count descending
@@ -510,7 +510,7 @@ async function loadStaff(d) {
     return;
   }
   tbody.innerHTML = sorted.map((s, i) => {
-    const stat = byUser[String(s.user_id)] || { total: 0, ok: 0, pending: 0 };
+    const stat = byUser[String(s.user_id)] || { total: 0, ok: 0, fail: 0 };
     const rate = stat.total > 0 ? Math.round(stat.ok / stat.total * 100) : 0;
     return `<tr>
       <td><strong>${i+1}</strong></td>
@@ -525,13 +525,13 @@ async function loadStaff(d) {
       <td>${s.username ? '@'+esc(s.username) : '-'}</td>
       <td>${stat.total}</td>
       <td style="color:var(--success)">${stat.ok}</td>
-      <td style="color:var(--warning)">${stat.pending}</td>
+      <td style="color:var(--danger)">${stat.fail}</td>
       <td>
         <div class="prog-wrap">
           <div class="prog-bar-bg">
             <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
           </div>
-          <span class="prog-text">${stat.ok}/${stat.total}</span>
+          <span class="prog-text">${rate}% (${stat.ok}/${stat.total})</span>
         </div>
       </td>
     </tr>`;
@@ -582,18 +582,18 @@ async function loadTaskUser(userId) {
     const byTask = {};
     for (const u of urls) {
       const tid = u.task_id;
-      if (!byTask[tid]) byTask[tid] = { total: 0, ok: 0, pending: 0 };
+      if (!byTask[tid]) byTask[tid] = { total: 0, ok: 0, fail: 0 };
       byTask[tid].total++;
       if (u.status === 'OK') byTask[tid].ok++;
-      else if (u.status === 'PENDING' || u.status === 'PROCESSING') byTask[tid].pending++;
+      else byTask[tid].fail++;
     }
 
-    let grandTotal = 0, grandOk = 0, grandPending = 0;
+    let grandTotal = 0, grandOk = 0, grandFail = 0;
 
     const rows = tasks.map(t => {
-      const stat = byTask[t.task_id] || { total: 0, ok: 0, pending: 0 };
+      const stat = byTask[t.task_id] || { total: 0, ok: 0, fail: 0 };
       const rate = stat.total > 0 ? Math.round(stat.ok / stat.total * 100) : 0;
-      grandTotal += stat.total; grandOk += stat.ok; grandPending += stat.pending;
+      grandTotal += stat.total; grandOk += stat.ok; grandFail += stat.fail;
 
       const hasActivity = stat.total > 0;
       return `<tr style="opacity:${hasActivity ? 1 : 0.45}">
@@ -601,13 +601,13 @@ async function loadTaskUser(userId) {
         <td><code>${esc(t.sheet_tab||'-')}</code></td>
         <td>${stat.total}</td>
         <td style="color:var(--success)">${stat.ok}</td>
-        <td style="color:var(--warning)">${stat.pending}</td>
+        <td style="color:var(--danger)">${stat.fail}</td>
         <td>
           <div class="prog-wrap">
             <div class="prog-bar-bg">
               <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
             </div>
-            <span class="prog-text">${stat.ok}/${stat.total}</span>
+            <span class="prog-text">${rate}% (${stat.ok}/${stat.total})</span>
           </div>
         </td>
       </tr>`;
@@ -620,9 +620,9 @@ async function loadTaskUser(userId) {
     const grandRate = grandTotal > 0 ? Math.round(grandOk / grandTotal * 100) : 0;
     summary.style.display = 'flex';
     summary.innerHTML = `
-      <span class="tus-chip">🔗 ${grandTotal} Total Link (Lifetime)</span>
+      <span class="tus-chip">🔗 ${grandTotal} Submitted (Lifetime)</span>
       <span class="tus-chip ok">✅ ${grandOk} OK</span>
-      <span class="tus-chip pend">⏳ ${grandPending} Pending</span>
+      <span class="tus-chip fail">❌ ${grandFail} Gagal</span>
       <span class="tus-chip ${grandRate > 80 ? 'ok' : grandRate > 50 ? '' : 'fail'}">📈 ${grandRate}% (${grandOk}/${grandTotal})</span>
     `;
 
