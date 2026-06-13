@@ -163,62 +163,88 @@ async def job_deadline_reminder(app):
             diff = deadline_dt - now
             diff_seconds = diff.total_seconds()
             
-            # Jika deadline kurang dari 2 jam (7200 detik) dan belum lewat
-            if 0 < diff_seconds < 7200:
-                task_id = task["task_id"]
-                quota_per_staff = task.get("quota_per_staff", 0)
+            level = None
+            label = ""
+            if 0 < diff_seconds <= 600:
+                level = "10m"
+                label = "⚠️ Kurang dari 10 Menit"
+            elif 600 < diff_seconds <= 3600:
+                level = "1h"
+                label = "⏳ Kurang dari 1 Jam"
+            elif 3600 < diff_seconds <= 7200:
+                level = "2h"
+                label = "⌛ Kurang dari 2 Jam"
                 
-                # Parsing list user yang di-assign
-                assigned_to_raw = task.get("assigned_to", '["all"]')
-                if isinstance(assigned_to_raw, str):
+            if not level:
+                continue
+
+            task_id = task["task_id"]
+            quota_per_staff = task.get("quota_per_staff", 0)
+            
+            # Parsing list user yang di-assign
+            assigned_to_raw = task.get("assigned_to", '["all"]')
+            if isinstance(assigned_to_raw, str):
+                try:
+                    assigned_to = json.loads(assigned_to_raw)
+                except Exception:
+                    assigned_to = ["all"]
+            else:
+                assigned_to = assigned_to_raw
+                
+            # Filter staff yang berhak mengerjakan task ini (semua staff jika "all", atau yang spesifik di-assign)
+            if "all" in assigned_to:
+                target_staff = staff_users
+            else:
+                target_staff = [u for u in staff_users if u["user_id"] in assigned_to or str(u["user_id"]) in assigned_to]
+                
+            for staff in target_staff:
+                user_id = staff["user_id"]
+                cache_key = f"{task_id}_{user_id}_{level}_{today}"
+                
+                if cache_key in alerts_sent:
+                    continue
+                    
+                # Cek progress pengerjaan staff
+                prog = await fdb.get_progress(task_id, user_id, today)
+                submitted = prog.get("submitted", 0) if prog else 0
+                failed_count = prog.get("verified_fail", 0) if prog else 0
+                
+                # Cek jika belum selesai (submitted < quota_per_staff)
+                if submitted < quota_per_staff:
+                    remaining = quota_per_staff - submitted
+                    deadline_str = deadline_dt.strftime("%d %B %Y %H:%M") + " WIB"
+                    
+                    status_tugas = ""
+                    if submitted == 0:
+                        status_tugas = "Anda belum mengklaim / mengerjakan kuota tugas hari ini."
+                    else:
+                        status_tugas = f"Sisa tugas Anda: {remaining} URL lagi."
+                        
+                    text = (
+                        f"⏰ *PENGINGAT DEADLINE TASK ({level.upper()})* ⏰\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 *Task*      : `{task_id}`\n"
+                        f"📝 *Judul*     : {task['title']}\n"
+                        f"⏰ *Deadline*  : {deadline_str}\n"
+                        f"🚨 *Sisa Waktu*: *{label}*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 *Status Progress Anda*:\n"
+                        f"• Total Selesai: *{submitted}/{quota_per_staff}* URL\n"
+                        f"• {status_tugas}\n"
+                        f"• Gagal/Perlu Retry: *{failed_count}* URL ❌\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"Segera buka menu bot dan selesaikan verifikasi Anda! ⚡"
+                    )
+                    
                     try:
-                        assigned_to = json.loads(assigned_to_raw)
-                    except Exception:
-                        assigned_to = ["all"]
-                else:
-                    assigned_to = assigned_to_raw
-                    
-                # Filter staff yang berhak mengerjakan task ini
-                if "all" in assigned_to:
-                    target_staff = staff_users
-                else:
-                    target_staff = [u for u in staff_users if u["user_id"] in assigned_to or str(u["user_id"]) in assigned_to]
-                    
-                for staff in target_staff:
-                    user_id = staff["user_id"]
-                    cache_key = f"{task_id}_{user_id}_{today}"
-                    
-                    if cache_key in alerts_sent:
-                        continue
-                        
-                    # Cek progress pengerjaan staff
-                    prog = await fdb.get_progress(task_id, user_id, today)
-                    submitted = prog.get("submitted", 0) if prog else 0
-                    
-                    # Cek jika belum selesai (submitted < quota_per_staff)
-                    if submitted < quota_per_staff:
-                        deadline_str = deadline_dt.strftime("%d %B %Y %H:%M") + " WIB"
-                        text = (
-                            f"⏰ *PENGINGAT DEADLINE TASK* ⏰\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📌 *Task*      : `{task_id}`\n"
-                            f"📝 *Judul*     : {task['title']}\n"
-                            f"⌛ *Sisa Waktu*: Kurang dari 2 Jam\n"
-                            f"⏰ *Deadline*  : {deadline_str}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"Progress Anda baru selesai *{submitted}/{quota_per_staff}* URL.\n"
-                            f"Segera buka menu bot dan selesaikan verifikasi Anda! ⚡"
+                        await app.bot.send_message(
+                            chat_id=user_id, text=text, parse_mode="Markdown"
                         )
+                        logger.info(f"[Scheduler] Sent deadline reminder ({level}) to user {user_id} for task {task_id}")
+                        alerts_sent[cache_key] = True
+                    except Exception as e:
+                        logger.warning(f"[Scheduler] Gagal mengirim deadline reminder ke {user_id}: {e}")
                         
-                        try:
-                            await app.bot.send_message(
-                                chat_id=user_id, text=text, parse_mode="Markdown"
-                            )
-                            logger.info(f"[Scheduler] Sent deadline reminder to user {user_id} for task {task_id}")
-                            alerts_sent[cache_key] = True
-                        except Exception as e:
-                            logger.warning(f"[Scheduler] Gagal mengirim deadline reminder ke {user_id}: {e}")
-                            
     except Exception as e:
         logger.error(f"[Scheduler] Error running job_deadline_reminder: {e}")
 
