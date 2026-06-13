@@ -214,6 +214,20 @@ async def _show_next_pending_url(
         # Jalankan update secara paralel di background (non-blocking)
         asyncio.create_task(asyncio.gather(*(safe_update(u) for u in claimed_urls), return_exceptions=True))
 
+    # Cek deadline
+    deadline_val = task.get("deadline") if task else None
+    deadline_passed = False
+    if deadline_val:
+        try:
+            if "T" in deadline_val:
+                deadline_dt = datetime.fromisoformat(deadline_val)
+            else:
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+            if datetime.now(TZ) > deadline_dt:
+                deadline_passed = True
+        except Exception as e:
+            logger.error(f"[VerifPending] Gagal parse deadline: {e}")
+
     if not url_obj:
         total   = await fdb.count_sheet_urls(task_id, today)
         pending = await fdb.count_sheet_urls(task_id, today, status="PENDING")
@@ -227,8 +241,10 @@ async def _show_next_pending_url(
             f"Total: {total} URL\n"
             f"✅ Valid : {ok}\n"
             f"❌ Lainnya: {done - ok}\n\n"
-            f"Terima kasih telah menyelesaikan verifikasi hari ini! 🙌"
         )
+        if deadline_passed:
+            text += f"⏰ *Deadline tugas ini telah terlewati.*\n\n"
+        text += f"Terima kasih telah menyelesaikan verifikasi hari ini! 🙌"
         msg = update.callback_query.message if update.callback_query else update.message
         await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
         return
@@ -239,6 +255,7 @@ async def _show_next_pending_url(
     done = max(0, total - pending - processing)
     bar   = progress_bar(done, total)
 
+    deadline_warn = "⚠️ *Peringatan: Deadline tugas ini telah terlewati!*\n\n" if deadline_passed else ""
 
     text = (
         f"🔗 *VERIFIKASI URL*\n"
@@ -247,6 +264,7 @@ async def _show_next_pending_url(
         f"📅 Tanggal  : {today}\n"
         f"📊 Progress : {bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{deadline_warn}"
         f"👤 Akun     : {url_obj.get('account') or '-'}\n"
         f"📝 Catatan  : {url_obj.get('notes') or '-'}\n\n"
         f"🔗 URL:\n`{url_obj['payment_url']}`\n\n"
@@ -543,6 +561,20 @@ async def _show_url_list(
         submitted = prog.get("submitted", 0) if prog else 0
         quota_exceeded = submitted >= quota_staff
 
+    # Cek deadline
+    deadline_val = task.get("deadline") if task else None
+    deadline_passed = False
+    if deadline_val:
+        try:
+            if "T" in deadline_val:
+                deadline_dt = datetime.fromisoformat(deadline_val)
+            else:
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+            if datetime.now(TZ) > deadline_dt:
+                deadline_passed = True
+        except Exception as e:
+            logger.error(f"[VerifList] Gagal parse deadline: {e}")
+
     limit = 5
     offset = (page - 1) * limit
 
@@ -590,7 +622,10 @@ async def _show_url_list(
         f"👤 Kuota  : {quota_str}",
         f"━━━━━━━━━━━━━━━━━━━━",
     ]
-    if quota_exceeded:
+    if deadline_passed:
+        text_lines.append("⚠️ *Deadline tugas ini telah terlewati.* Anda tetap dapat melihat dan memverifikasi link.")
+        text_lines.append("━━━━━━━━━━━━━━━━━━━━")
+    elif quota_exceeded:
         text_lines.append("✅ *Kuota hari ini sudah terpenuhi* — Anda bisa melihat link tapi verifikasi ditutup.")
         text_lines.append("━━━━━━━━━━━━━━━━━━━━")
 
@@ -615,6 +650,9 @@ async def _show_url_list(
             notes = u.get("notes") or ""
             notes_str = f" ({notes})" if notes else ""
 
+            # Tampilkan status gagal/failed secara jelas di daftar link
+            failed_status_str = f" | {status}" if status not in ("PENDING", "PROCESSING", "OK", "SKIPPED") else ""
+
             staff_str = ""
             verified_by_id = u.get("verified_by")
             if verified_by_id:
@@ -627,21 +665,17 @@ async def _show_url_list(
                     pass
 
             text_lines.append(
-                f"{idx}. {emoji} *{acc}*{notes_str}{staff_str}\n"
+                f"{idx}. {emoji} *{acc}*{failed_status_str}{notes_str}{staff_str}\n"
                 f"   🔗 [Buka Stripe Checkout]({u['payment_url']})"
             )
 
-            # Tombol verif hanya tampil jika quota belum penuh
-            if not quota_exceeded:
-                buttons.append(InlineKeyboardButton(
-                    f"⚡ Verif #{idx}", callback_data=f"url:show_detail:{u['id']}:{page}"
-                ))
+            # Tombol verif selalu tampil agar staff tetap bisa memproses/retry
+            buttons.append(InlineKeyboardButton(
+                f"⚡ Verif #{idx}", callback_data=f"url:show_detail:{u['id']}:{page}"
+            ))
 
     text_lines.append("━━━━━━━━━━━━━━━━━━━━")
-    if quota_exceeded:
-        text_lines.append("_Link di atas bisa dibuka langsung dari Telegram._")
-    else:
-        text_lines.append("Klik link untuk membuka Stripe Checkout, atau tombol untuk verifikasi.")
+    text_lines.append("Klik link untuk membuka Stripe Checkout, atau tombol untuk verifikasi.")
 
     kb_rows = []
     row = []
@@ -741,6 +775,28 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             pass
 
+    # Cek deadline
+    deadline_val = task.get("deadline") if task else None
+    deadline_passed = False
+    if deadline_val:
+        try:
+            if "T" in deadline_val:
+                deadline_dt = datetime.fromisoformat(deadline_val)
+            else:
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+            if datetime.now(TZ) > deadline_dt:
+                deadline_passed = True
+        except Exception as e:
+            logger.error(f"[VerifDetail] Gagal parse deadline: {e}")
+
+    warnings = []
+    if quota_exceeded:
+        warnings.append(f"⚠️ *Kuota Staff Terpenuhi!* ({submitted}/{quota_staff})")
+    if deadline_passed:
+        warnings.append("⏰ *Deadline tugas ini telah terlewati.*")
+
+    warning_text = ("\n".join(warnings) + "\n\n") if warnings else ""
+
     text = (
         f"🔗 *DETAIL URL VERIFIKASI*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -752,32 +808,21 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"📊 Status   : {status_emoji} {url_obj.get('status')}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"🔗 URL:\n`{url_obj['payment_url']}`\n\n"
+        f"{warning_text}Klik *Verifikasi Sekarang* untuk memeriksa URL ini."
     )
-    
-    if quota_exceeded:
-        text += f"⚠️ *Kuota Staff Terpenuhi!*\nAnda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini."
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
-            ],
-            [
-                InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
-            ]
-        ])
-    else:
-        text += f"Klik *Verifikasi Sekarang* untuk memeriksa URL ini."
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
-            ],
-            [
-                InlineKeyboardButton("✅ Verifikasi Sekarang", callback_data=f"url:verify_detail:{doc_id}:{page}"),
-                InlineKeyboardButton("⏭️ Skip", callback_data=f"url:skip_detail:{doc_id}:{page}"),
-            ],
-            [
-                InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
-            ]
-        ])
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🌐 Buka Link Stripe", url=url_obj["payment_url"])
+        ],
+        [
+            InlineKeyboardButton("✅ Verifikasi Sekarang", callback_data=f"url:verify_detail:{doc_id}:{page}"),
+            InlineKeyboardButton("⏭️ Skip", callback_data=f"url:skip_detail:{doc_id}:{page}"),
+        ],
+        [
+            InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")
+        ]
+    ])
     
     msg = update.callback_query.message
     try:

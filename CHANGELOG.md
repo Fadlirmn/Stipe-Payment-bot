@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-06-13] — Keep Verification Active After Deadline & Display Failed Statuses
+
+### Changed
+- `[Changed]` **Always Active Verification Link**: Modified `_show_url_list` and `cb_url_show_detail` in `bot/handlers/verif.py` to always keep the `⚡ Verif #{idx}` buttons and detail action buttons visible/clickable even if the quota is exceeded or the task deadline has passed.
+- `[Changed]` **Deadline Warning Banner**: Added task deadline checks and warning banners in `_show_url_list`, `cb_url_show_detail`, and `_show_next_pending_url` to inform staff when a task is past its deadline.
+- `[Changed]` **Failed Status Display in URL List**: Added the exact status label (e.g. `| HTTP_ERR`) next to failed URLs in the list of links (daftarlink) to let staff easily see which URLs failed verification.
+
 ## [2026-06-13] — Ignore Dev/System in Stats & Map Stats to Assignee
 
 ### Changed

@@ -292,6 +292,25 @@ When the task quota is changed, the pre-assigned pending links for users today b
     - *Decision*: Ubah return type dari `int` (count) menjadi `list[dict]` (URL objects yang baru di-assign).
     - *Rationale*: Caller di `_show_url_list` mengiterasi return value untuk update status ke Google Sheets per-URL. Mengembalikan `int` menyebabkan `TypeError: 'int' object is not iterable` yang membuat bot crash saat staff membuka daftar link.
 
+## [2026-06-13] - Keep Verification Active After Deadline & Display Failed Statuses
+
+### Context
+1. Staff members need to be able to verify and retry links even if a task's deadline has already passed.
+2. In the URL list view ("Lihat Daftar Link"), staff could not see which specific error status a URL had (e.g. `HTTP_ERR`, `TIMEOUT`), making it hard to identify what was wrong.
+3. Verification options were hidden or disabled once the deadline passed or the staff's quota was met, preventing retries of failed tasks.
+
+### Decisions
+1. **Always-On Verification Actions**:
+   - *Decision*: Do not hide or remove the `⚡ Verif #{idx}` buttons in `_show_url_list` or the `✅ Verifikasi Sekarang` / `⏭️ Skip` buttons in `cb_url_show_detail` when a task is past its deadline or the daily quota is exceeded.
+   - *Rationale*: Staff must always have the technical capability to retry or finish verification for assigned URLs.
+2. **Deadline Warnings**:
+   - *Decision*: Display a clear notice (`⏰ Deadline tugas ini telah terlewati`) in the URL list, URL details, and pending URL views.
+   - *Rationale*: Informs staff of the deadline status without restricting their workflow.
+3. **Explicit Error Status in Lists**:
+   - *Decision*: Append the exact status code (e.g., `| HTTP_ERR`) next to the account name in the list of links for any non-successful statuses (excluding `PENDING`, `PROCESSING`, `OK`, and `SKIPPED`).
+   - *Rationale*: Provides immediate visibility of failed URLs in the list representation, matching the user's request.
+
+
 
 
 
