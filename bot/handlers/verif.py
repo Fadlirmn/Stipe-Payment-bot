@@ -456,10 +456,10 @@ async def _show_task_options_menu(
 
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("⚡ Mulai Verif (Auto)", callback_data=f"task:start_verif:{task_id}")
+            InlineKeyboardButton("🔗 Ambil Link", callback_data=f"task:start_verif:{task_id}")
         ],
         [
-            InlineKeyboardButton("⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:1")
+            InlineKeyboardButton("⚡ Verif Auto", callback_data=f"url:verify_all:{task_id}:1")
         ],
         [
             InlineKeyboardButton("📋 Lihat Daftar Link", callback_data=f"url:list_page:{task_id}:1")
@@ -625,10 +625,10 @@ async def _show_url_list(
     if row:
         kb_rows.append(row)
 
-    # Selalu tampilkan tombol "⚡ Verif Semua PENDING" agar staff bisa klik dan melihat status link aktif & link semuanya
+    # Selalu tampilkan tombol "⚡ Verif Auto" agar staff bisa klik dan melihat status link aktif & link semuanya
     if urls:
         kb_rows.append([InlineKeyboardButton(
-            "⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:{page}"
+            "⚡ Verif Auto", callback_data=f"url:verify_all:{task_id}:{page}"
         )])
 
     nav_row = []
@@ -895,11 +895,10 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok_count = await fdb.count_sheet_urls(task_id, today, status="OK")
     total_count = await fdb.count_sheet_urls(task_id, today)
 
-    # Ambil semua URL PENDING dan PROCESSING untuk hari ini untuk dihitung total yang belum terverifikasi
+    # Staff SELALU hanya melihat URL miliknya sendiri
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
-        if quota_staff > 0:
-            verified_by_filter = str(user["user_id"])
+        verified_by_filter = str(user["user_id"])
     
     pending_urls, _ = await fdb.list_sheet_urls(
         task_id=task_id, date=today, status="PENDING", limit=500, verified_by=verified_by_filter
@@ -976,11 +975,10 @@ async def cb_url_verify_all_confirm(update: Update, context: ContextTypes.DEFAUL
             await _show_url_list(update, context, task_id, today, page)
             return
 
-    # Ambil semua URL PENDING dan PROCESSING untuk hari ini
+    # Staff SELALU hanya verif URL miliknya sendiri
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
-        if quota_staff > 0:
-            verified_by_filter = str(user["user_id"])
+        verified_by_filter = str(user["user_id"])
     
     pending_urls, _ = await fdb.list_sheet_urls(
         task_id=task_id, date=today, status="PENDING", limit=500, verified_by=verified_by_filter
@@ -1061,6 +1059,10 @@ async def cb_url_verify_all_confirm(update: Update, context: ContextTypes.DEFAUL
             "verified_by": user["user_id"],
             "verified_at": now_wib().isoformat(),
         }
+        # assigned_to hanya diisi sekali (staff asli)
+        current_url = await fdb.get_sheet_url(doc_id)
+        if current_url and not current_url.get("assigned_to"):
+            db_update["assigned_to"] = str(user["user_id"])
         if api_key:
             db_update["api_key_status"] = api_key_status
         await fdb.update_sheet_url(doc_id, **db_update)
