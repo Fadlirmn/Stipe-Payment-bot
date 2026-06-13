@@ -241,7 +241,15 @@ function initDashboard() {
 }
 
 // ── Helpers ───────────────────────────────────────────────
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+function todayStr() {
+  // Gunakan WIB (Asia/Jakarta) agar konsisten dengan backend & Google Sheets
+  const now = new Date();
+  const wib = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+  const y = wib.getFullYear();
+  const m = String(wib.getMonth() + 1).padStart(2, '0');
+  const d = String(wib.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
 function updateClock() {
   document.getElementById('clock').textContent =
@@ -471,22 +479,29 @@ async function loadTasks(d) {
 // STAFF MONITOR
 // ══════════════════════════════════════════════════════════
 async function loadStaff(d) {
-  const [staffList, progs] = await Promise.all([
+  // Tampilkan label tanggal di header
+  const dateLabel = document.getElementById('staff-date-label');
+  if (dateLabel) dateLabel.textContent = `— ${d}`;
+
+  const [staffList, urls] = await Promise.all([
     getDocs('users', [['role','==','staff']]),
-    getDocs('task_progress', [['date','==',d]]),
+    getDocs('sheet_urls', [['date','==',d]]),
   ]);
 
+  // Group URLs by assigned staff (assigned_to = immutable field, tidak ditimpa oleh verify_all)
   const byUser = {};
-  for (const p of progs) {
-    const uid = p.user_id;
-    if (!byUser[uid]) byUser[uid] = { submitted: 0, ok: 0, fail: 0 };
-    byUser[uid].submitted += p.submitted || 0;
-    byUser[uid].ok        += p.verified_ok || 0;
-    byUser[uid].fail      += p.verified_fail || 0;
+  for (const u of urls) {
+    const uid = String(u.assigned_to || u.verified_by || '');
+    if (!uid) continue;
+    if (!byUser[uid]) byUser[uid] = { total: 0, ok: 0, pending: 0 };
+    byUser[uid].total++;
+    if (u.status === 'OK') byUser[uid].ok++;
+    else if (u.status === 'PENDING' || u.status === 'PROCESSING') byUser[uid].pending++;
   }
 
+  // Sort by OK count descending
   const sorted = staffList.sort((a, b) =>
-    (byUser[b.user_id]?.ok || 0) - (byUser[a.user_id]?.ok || 0)
+    (byUser[String(b.user_id)]?.ok || 0) - (byUser[String(a.user_id)]?.ok || 0)
   );
 
   const tbody = document.getElementById('staff-tbody');
@@ -495,8 +510,8 @@ async function loadStaff(d) {
     return;
   }
   tbody.innerHTML = sorted.map((s, i) => {
-    const stat = byUser[s.user_id] || { submitted: 0, ok: 0, fail: 0 };
-    const rate = stat.submitted > 0 ? Math.round(stat.ok / stat.submitted * 100) : 0;
+    const stat = byUser[String(s.user_id)] || { total: 0, ok: 0, pending: 0 };
+    const rate = stat.total > 0 ? Math.round(stat.ok / stat.total * 100) : 0;
     return `<tr>
       <td><strong>${i+1}</strong></td>
       <td>
@@ -508,15 +523,15 @@ async function loadStaff(d) {
         </div>
       </td>
       <td>${s.username ? '@'+esc(s.username) : '-'}</td>
-      <td>${stat.submitted}</td>
+      <td>${stat.total}</td>
       <td style="color:var(--success)">${stat.ok}</td>
-      <td style="color:var(--danger)">${stat.fail}</td>
+      <td style="color:var(--warning)">${stat.pending}</td>
       <td>
         <div class="prog-wrap">
           <div class="prog-bar-bg">
             <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
           </div>
-          <span class="prog-text">${rate}%</span>
+          <span class="prog-text">${stat.ok}/${stat.total}</span>
         </div>
       </td>
     </tr>`;
@@ -552,45 +567,47 @@ async function loadTaskUser(userId) {
   if (currentUser.role === 'staff' && String(userId) !== String(currentUser.id)) {
     userId = currentUser.id;
   }
-  const d = document.getElementById('datePicker').value;
   const tbody = document.getElementById('taskuser-tbody');
   const summary = document.getElementById('task-user-summary');
-  tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="6" class="loading-row">⏳ Memuat data lifetime...</td></tr>';
   summary.style.display = 'none';
 
   try {
-    const [tasks, progs] = await Promise.all([
+    const [tasks, urls] = await Promise.all([
       getDocs('tasks'),
-      getDocs('task_progress', [['user_id','==', parseInt(userId)], ['date','==', d]]),
+      getDocs('sheet_urls', [['assigned_to','==', String(userId)]], null, 'desc', 5000),
     ]);
 
-    const progByTask = {};
-    for (const p of progs) progByTask[p.task_id] = p;
+    // Group by task_id (semua tanggal, lifetime)
+    const byTask = {};
+    for (const u of urls) {
+      const tid = u.task_id;
+      if (!byTask[tid]) byTask[tid] = { total: 0, ok: 0, pending: 0 };
+      byTask[tid].total++;
+      if (u.status === 'OK') byTask[tid].ok++;
+      else if (u.status === 'PENDING' || u.status === 'PROCESSING') byTask[tid].pending++;
+    }
 
-    let totalSub = 0, totalOk = 0, totalFail = 0;
+    let grandTotal = 0, grandOk = 0, grandPending = 0;
 
     const rows = tasks.map(t => {
-      const p   = progByTask[t.task_id] || { submitted: 0, verified_ok: 0, verified_fail: 0 };
-      const sub = p.submitted || 0;
-      const ok  = p.verified_ok || 0;
-      const fail= p.verified_fail || 0;
-      const rate= sub > 0 ? Math.round(ok / sub * 100) : 0;
-      totalSub += sub; totalOk += ok; totalFail += fail;
+      const stat = byTask[t.task_id] || { total: 0, ok: 0, pending: 0 };
+      const rate = stat.total > 0 ? Math.round(stat.ok / stat.total * 100) : 0;
+      grandTotal += stat.total; grandOk += stat.ok; grandPending += stat.pending;
 
-      const hasActivity = sub > 0;
+      const hasActivity = stat.total > 0;
       return `<tr style="opacity:${hasActivity ? 1 : 0.45}">
         <td>${esc(t.title)}</td>
         <td><code>${esc(t.sheet_tab||'-')}</code></td>
-        <td>${sub}</td>
-        <td style="color:var(--success)">${ok}</td>
-        <td style="color:var(--danger)">${fail}</td>
-        <td>${sub > 0 ? rate+'%' : '—'}</td>
+        <td>${stat.total}</td>
+        <td style="color:var(--success)">${stat.ok}</td>
+        <td style="color:var(--warning)">${stat.pending}</td>
         <td>
           <div class="prog-wrap">
             <div class="prog-bar-bg">
               <div class="prog-bar-fill" style="width:${rate}%;background:${rate>80?'var(--success)':rate>50?'var(--warning)':'var(--danger)'}"></div>
             </div>
-            <span class="prog-text">${ok}/${sub}</span>
+            <span class="prog-text">${stat.ok}/${stat.total}</span>
           </div>
         </td>
       </tr>`;
@@ -598,20 +615,20 @@ async function loadTaskUser(userId) {
 
     tbody.innerHTML = rows.length
       ? rows.join('')
-      : '<tr><td colspan="7" class="loading-row">📭 Tidak ada task</td></tr>';
+      : '<tr><td colspan="6" class="loading-row">📭 Tidak ada task</td></tr>';
 
-    const totalRate = totalSub > 0 ? Math.round(totalOk / totalSub * 100) : 0;
+    const grandRate = grandTotal > 0 ? Math.round(grandOk / grandTotal * 100) : 0;
     summary.style.display = 'flex';
     summary.innerHTML = `
-      <span class="tus-chip">📦 ${totalSub} Submitted</span>
-      <span class="tus-chip ok">✅ ${totalOk} OK</span>
-      <span class="tus-chip fail">❌ ${totalFail} Gagal</span>
-      <span class="tus-chip pend">📈 Rate: ${totalRate}%</span>
+      <span class="tus-chip">🔗 ${grandTotal} Total Link (Lifetime)</span>
+      <span class="tus-chip ok">✅ ${grandOk} OK</span>
+      <span class="tus-chip pend">⏳ ${grandPending} Pending</span>
+      <span class="tus-chip ${grandRate > 80 ? 'ok' : grandRate > 50 ? '' : 'fail'}">📈 ${grandRate}% (${grandOk}/${grandTotal})</span>
     `;
 
   } catch (err) {
     console.error('TaskUser error:', err);
-    tbody.innerHTML = '<tr><td colspan="7" class="loading-row">⚠️ Gagal memuat data</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="loading-row">⚠️ Gagal memuat data</td></tr>';
   }
 }
 
@@ -680,7 +697,11 @@ async function loadAnalytics() {
   for (let i = 6; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
+    // Gunakan WIB agar konsisten dengan backend
+    const wibD = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const dateStr = wibD.getFullYear() + '-' +
+      String(wibD.getMonth()+1).padStart(2,'0') + '-' +
+      String(wibD.getDate()).padStart(2,'0');
     labels.push(dateStr.slice(5));
 
     const [ok, total] = await Promise.all([

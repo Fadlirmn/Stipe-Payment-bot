@@ -86,7 +86,7 @@
           <span class="nav-icon">👥</span> Staff Monitor
         </a>
         <a href="#" class="nav-item" data-section="taskuser">
-          <span class="nav-icon">📊</span> Task per User
+          <span class="nav-icon">📊</span> Rate per User
         </a>
         <a href="#" class="nav-item" data-section="urllog">
           <span class="nav-icon">🔗</span> URL Log
@@ -166,20 +166,20 @@
       <!-- ── STAFF MONITOR ── -->
       <section class="section" id="section-staff">
         <div class="card">
-          <div class="card-header">👥 Leaderboard Staff</div>
+          <div class="card-header">👥 Leaderboard Staff <small style="color:var(--text-secondary);font-weight:400;margin-left:8px;" id="staff-date-label"></small></div>
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>#</th><th>Nama</th><th>Username</th><th>Submitted</th><th>✅ OK</th><th>❌ Gagal</th><th>Rate</th></tr></thead>
+              <thead><tr><th>#</th><th>Nama</th><th>Username</th><th>Total Link</th><th>✅ OK</th><th>⏳ Pending</th><th>Completion</th></tr></thead>
               <tbody id="staff-tbody"><tr><td colspan="7" class="loading-row">⏳ Memuat data...</td></tr></tbody>
             </table>
           </div>
         </div>
       </section>
 
-      <!-- ── TASK PER USER ── -->
+      <!-- ── RATE PER USER ── -->
       <section class="section" id="section-taskuser">
         <div class="card">
-          <div class="card-header">📊 Progress Task per User</div>
+          <div class="card-header">📊 Rate per User</div>
           <div class="user-selector-wrap">
             <label for="user-select">Pilih Staff:</label>
             <select id="user-select" class="user-select">
@@ -192,11 +192,11 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Task</th><th>Tab Sheet</th><th>Submitted</th>
-                  <th>✅ OK</th><th>❌ Gagal</th><th>Rate</th><th>Progress</th>
+                  <th>Task</th><th>Tab Sheet</th><th>Total Link</th>
+                  <th>✅ OK</th><th>⏳ Pending</th><th>Completion</th>
                 </tr>
               </thead>
-              <tbody id="taskuser-tbody"><tr><td colspan="7" class="loading-row">👆 Pilih staff untuk melihat progress</td></tr></tbody>
+              <tbody id="taskuser-tbody"><tr><td colspan="6" class="loading-row">👆 Pilih staff untuk melihat progress</td></tr></tbody>
             </table>
           </div>
         </div>
