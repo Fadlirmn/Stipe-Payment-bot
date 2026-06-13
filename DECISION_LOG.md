@@ -1,5 +1,17 @@
 # Decision Log
 
+## [2026-06-13] - Prevent Status Reset in Sheets -> DB Sync
+
+### Context
+When syncing status back from Google Sheets to the Database (via `sync_status_from_sheets_to_db`), if a URL was already verified and had a final/verified status (like `OK`, `FAILED`, etc.) in the database, but the spreadsheet had not been updated yet or was restored (e.g., having status `PENDING` or `ASSIGNED`), the DB status would get overwritten and reset back to the non-final status.
+
+### Decisions
+1. **Prevent Demotion of Final Statuses**: Modify `sync_status_from_sheets_to_db` to check if the database status is already a final status (`OK`, `FAILED`, `TIMEOUT`, `SKIPPED`, `ERROR`, or starting with `HTTP_ERR`). If it is, and the incoming status from the sheet is not a final status (like `PENDING` or `ASSIGNED`), prevent overwriting the DB.
+2. **Allow Final-to-Final Updates**: Allow updates if both the DB status and the sheet status are final (e.g., `FAILED` -> `OK`), in case manual corrections are made in the spreadsheet.
+
+### Affected Files
+- `bot/services/sheet_parser.py`
+
 ## [2026-06-13] - Timezone & Status Standardization
 
 ### Context

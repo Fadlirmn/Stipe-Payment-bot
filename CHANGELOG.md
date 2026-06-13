@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - `[Fixed]` **Dashboard `todayStr()` UTC Bug**: Frontend dashboard menggunakan `.toISOString()` yang selalu mengembalikan UTC. Date picker default dan analytics chart sekarang menggunakan timezone WIB.
 - `[Fixed]` **Status `SUCCESS` vs `OK` Double Counting**: `sync_status_from_sheets_to_db` menyimpan status mentah dari Sheets tanpa normalisasi. Jika Sheets berisi "SUCCESS", DB menyimpan "SUCCESS" sementara dashboard hanya query `status == 'OK'`. Sekarang status dinormalisasi via `_normalize_status()` (SUCCESS → OK).
 - `[Fixed]` **Progress Delta Double Counting**: `verify_all_urls_today` hanya mengecek `old_status == "OK"` tanpa meng-handle "SUCCESS", menyebabkan `ok_delta` tidak dikurangi saat re-verifikasi URL yang sebelumnya "SUCCESS". Sekarang menggunakan `_is_ok_status()` helper.
+- `[Fixed]` **Status Reset During Sheets->DB Sync**: `sync_status_from_sheets_to_db` did not check if the status in the DB was already final (e.g. `OK`, `FAILED`) before updating it with status from Google Sheets. This could cause verified URLs to be reset to "PENDING" or "ASSIGNED" when syncing. Added checks to prevent overwriting a final DB status with a non-final status from Sheets.
 
 ### Changed
 - `[Changed]` Menambahkan helper functions `_normalize_status()` dan `_is_ok_status()` di `sheet_parser.py` sebagai single source of truth untuk normalisasi dan pengecekan status OK.

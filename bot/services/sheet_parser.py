@@ -549,56 +549,59 @@ async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=
             old_status = db_url.get("status")
             new_status = _normalize_status(sheet_status)  # SUCCESS → OK
             
-            # Jika status berbeda dan new_status tidak kosong
             if new_status and new_status != old_status:
-                is_final_status = _is_ok_status(new_status) or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR")
-                
-                # Update DB sheet_urls
-                db_update = {
-                    "status": new_status,
-                    "verified_at": now_wib().isoformat()
-                }
-                if target_verifier_id:
-                    db_update["verified_by"] = str(target_verifier_id)
-                await fdb.update_sheet_url(doc_id, **db_update)
-                updated_count += 1
-
-                # Jika status baru adalah status final dan verifikator teridentifikasi, update progress
-                if is_final_status and target_verifier_id:
-                    submitted_delta = 0
-                    ok_delta = 0
-                    fail_delta = 0
+                old_is_final = old_status and (_is_ok_status(old_status) or old_status.startswith("HTTP_ERR") or old_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR"))
+                new_is_final = new_status and (_is_ok_status(new_status) or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR"))
+                # Jangan reset status final di DB ke status non-final dari Sheets
+                if not (old_is_final and not new_is_final):
+                    is_final_status = _is_ok_status(new_status) or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR")
                     
-                    # Jika status sebelumnya adalah PENDING atau PROCESSING (belum final)
-                    if old_status in ("PENDING", "PROCESSING", None):
-                        submitted_delta = 1
-                        if _is_ok_status(new_status):
-                            ok_delta = 1
+                    # Update DB sheet_urls
+                    db_update = {
+                        "status": new_status,
+                        "verified_at": now_wib().isoformat()
+                    }
+                    if target_verifier_id:
+                        db_update["verified_by"] = str(target_verifier_id)
+                    await fdb.update_sheet_url(doc_id, **db_update)
+                    updated_count += 1
+ 
+                    # Jika status baru adalah status final dan verifikator teridentifikasi, update progress
+                    if is_final_status and target_verifier_id:
+                        submitted_delta = 0
+                        ok_delta = 0
+                        fail_delta = 0
+                        
+                        # Jika status sebelumnya adalah PENDING atau PROCESSING (belum final)
+                        if old_status in ("PENDING", "PROCESSING", None):
+                            submitted_delta = 1
+                            if _is_ok_status(new_status):
+                                ok_delta = 1
+                            else:
+                                fail_delta = 1
                         else:
-                            fail_delta = 1
-                    else:
-                        # Jika sebelumnya sudah status final, sesuaikan deltas
-                        if _is_ok_status(new_status):
-                            ok_delta = 1
-                        else:
-                            fail_delta = 1
-                            
-                        if _is_ok_status(old_status):
-                            ok_delta -= 1
-                        else:
-                            fail_delta -= 1
-                            
-                    try:
-                        await fdb.upsert_progress(
-                            task_id=task_id,
-                            user_id=target_verifier_id,
-                            date=target_date_str,
-                            submitted_delta=submitted_delta,
-                            ok_delta=ok_delta,
-                            fail_delta=fail_delta
-                        )
-                    except Exception as e:
-                        logger.error(f"[SyncStatus] Gagal update progress untuk user {target_verifier_id}: {e}")
+                            # Jika sebelumnya sudah status final, sesuaikan deltas
+                            if _is_ok_status(new_status):
+                                ok_delta = 1
+                            else:
+                                fail_delta = 1
+                                
+                            if _is_ok_status(old_status):
+                                ok_delta -= 1
+                            else:
+                                fail_delta -= 1
+                                
+                        try:
+                            await fdb.upsert_progress(
+                                task_id=task_id,
+                                user_id=target_verifier_id,
+                                date=target_date_str,
+                                submitted_delta=submitted_delta,
+                                ok_delta=ok_delta,
+                                fail_delta=fail_delta
+                            )
+                        except Exception as e:
+                            logger.error(f"[SyncStatus] Gagal update progress untuk user {target_verifier_id}: {e}")
 
             if progress_callback:
                 await progress_callback(total_processed)
