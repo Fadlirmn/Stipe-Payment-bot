@@ -19,9 +19,24 @@ async def job_eod_summary(app):
 
     # Ambil semua sheet_urls hari ini
     urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
+    
+    # Cache daftar user dengan role staff
+    all_users = await fdb.list_users()
+    staff_ids = {u["user_id"] for u in all_users if u.get("role") == "staff"}
+    
     total, ok, fail = 0, 0, 0
     from bot.services.sheet_parser import _is_ok_status
     for u in urls:
+        uid_str = u.get("assigned_to")
+        if not uid_str:
+            continue
+        try:
+            uid = int(uid_str)
+        except (ValueError, TypeError):
+            continue
+        if uid not in staff_ids:
+            continue
+            
         total += 1
         status = u.get("status")
         if _is_ok_status(status):

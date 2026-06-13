@@ -1,5 +1,22 @@
 # Decision Log
 
+## [2026-06-13] - Ignore Dev/System in Statistics & Use Assignee as Stats Owner
+
+### Context
+When developers or system automation verify/assign URLs, these actions were previously counted in general task progress and metrics. Since the bot reports and dashboard statistics are meant to monitor staff production, any dev/system activities should be ignored. Additionally, statistics should consistently be attributed to the assignee (`assigned_to`) instead of the verification actor (`verified_by`), since system/dev users might verify URLs assigned to staff.
+
+### Decisions
+1. **Assignee-based attribution**: Modify all `upsert_progress` calls in `verif.py` and `sheet_parser.py` to use `assigned_to` (or `assigned_by` from sheets) rather than `verified_by`.
+2. **Filter by staff role**: Query user roles before updating database progress logs and only update `task_progress` if the assignee has the `staff` role.
+3. **Align scheduler EOD summary**: Filter the EOD summary scheduler job to only calculate metrics for URLs assigned to staff users.
+4. **Dashboard filter**: Update frontend metrics calculations and the 7-day analytics chart to only include URLs assigned to staff users.
+
+### Affected Files
+- `bot/scheduler.py`
+- `bot/handlers/verif.py`
+- `bot/services/sheet_parser.py`
+- `js/dashboard.js`
+
 ## [2026-06-13] - Prevent Status Reset in Sheets -> DB Sync
 
 ### Context

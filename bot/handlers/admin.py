@@ -163,15 +163,31 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ambil semua sheet_urls hari ini
     urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
     
+    # Cache daftar user dengan role staff
+    all_users = await fdb.list_users()
+    staff_ids = {u["user_id"] for u in all_users if u.get("role") == "staff"}
+    
     total, ok, fail = 0, 0, 0
     by_user: dict[int, dict] = {}
     
     from bot.services.sheet_parser import _is_ok_status
     
     for u in urls:
+        uid_str = u.get("assigned_to")
+        if not uid_str:
+            continue
+            
+        try:
+            uid = int(uid_str)
+        except (ValueError, TypeError):
+            continue
+            
+        # Abaikan jika bukan staff (dev / system / admin)
+        if uid not in staff_ids:
+            continue
+            
         total += 1
         status = u.get("status")
-        
         is_ok = _is_ok_status(status)
         
         if is_ok:
@@ -179,22 +195,14 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             fail += 1
             
-        # Group by staff (assigned_to strictly)
-        uid_str = u.get("assigned_to")
-        if uid_str:
-            try:
-                uid = int(uid_str)
-            except (ValueError, TypeError):
-                continue
-                
-            if uid not in by_user:
-                by_user[uid] = {"total": 0, "ok": 0, "fail": 0}
-                
-            by_user[uid]["total"] += 1
-            if is_ok:
-                by_user[uid]["ok"] += 1
-            else:
-                by_user[uid]["fail"] += 1
+        if uid not in by_user:
+            by_user[uid] = {"total": 0, "ok": 0, "fail": 0}
+            
+        by_user[uid]["total"] += 1
+        if is_ok:
+            by_user[uid]["ok"] += 1
+        else:
+            by_user[uid]["fail"] += 1
 
     bar  = progress_bar(ok, total) if total else "—"
     text = (

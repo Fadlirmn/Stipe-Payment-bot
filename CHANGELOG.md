@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-06-13] — Ignore Dev/System in Stats & Map Stats to Assignee
+
+### Changed
+- `[Changed]` **EOD Summary Scheduler Staff Only**: Modified `job_eod_summary` in `bot/scheduler.py` to count only URLs assigned to staff users, ensuring alignment with daily report statistics.
+- `[Changed]` **Assignee-based Progress Owner**: Updated progress updates (`fdb.upsert_progress`) in `bot/handlers/verif.py` (individual verify, mass verify, and retry handlers) and `bot/services/sheet_parser.py` (sync status, re-verify failed URLs, verify all) to increment/decrement stats for the assigned user (`assigned_to` or `assigned_by` column) rather than the verification actor, and only if the assignee has the `staff` role.
+- `[Changed]` **Dashboard Stats Filtered to Staff**: Modified frontend dashboard metrics calculations and analytics chart inside `js/dashboard.js` to only count URLs assigned to users with the `staff` role.
+
 ## [2026-06-13] — Fix Timezone & Status Inconsistency (Dashboard Ngaco)
 
 ### Fixed

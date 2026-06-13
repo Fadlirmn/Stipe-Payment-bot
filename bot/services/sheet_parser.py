@@ -259,14 +259,17 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
 
                 if result.is_ok:
                     reverif_ok += 1
-                    if url_obj.get("verified_by"):
+                    staff_id_str = url_obj.get("assigned_to") or url_obj.get("verified_by")
+                    if staff_id_str:
                         try:
-                            staff_id = int(url_obj["verified_by"])
-                            await fdb.upsert_progress(
-                                task_id=task_id, user_id=staff_id,
-                                date=url_obj["date"],
-                                submitted_delta=0, ok_delta=1, fail_delta=-1
-                            )
+                            staff_id = int(staff_id_str)
+                            staff_user = await fdb.get_user(staff_id)
+                            if staff_user and staff_user.get("role") == "staff":
+                                await fdb.upsert_progress(
+                                    task_id=task_id, user_id=staff_id,
+                                    date=url_obj["date"],
+                                    submitted_delta=0, ok_delta=1, fail_delta=-1
+                                )
                         except Exception as e:
                             logger.error(f"[Reconciler] Gagal update progress: {e}")
                 else:
@@ -349,14 +352,14 @@ async def verify_all_urls_today(target_date_str: str, actor_id: int, progress_ca
         tab         = url_obj["_tab"]
         api_key     = url_obj.get("api_key", "")
 
-        # Pertahankan verifikator/assignee asli agar kontribusi staf tidak hilang
-        original_verifier = url_obj.get("verified_by")
-        target_verifier = original_verifier if original_verifier else str(actor_id)
+        # Pertahankan assignee asli agar kontribusi staf tidak hilang
+        original_assignee = url_obj.get("assigned_to") or url_obj.get("verified_by")
+        target_assignee = original_assignee if original_assignee else str(actor_id)
         
         try:
-            target_verifier_id = int(target_verifier)
+            target_assignee_id = int(target_assignee)
         except (ValueError, TypeError):
-            target_verifier_id = actor_id
+            target_assignee_id = actor_id
 
         async with sem:
             try:
@@ -368,7 +371,7 @@ async def verify_all_urls_today(target_date_str: str, actor_id: int, progress_ca
                     "status":      result.status.value,
                     "http_code":   result.http_code,
                     "error_msg":   result.message if not result.is_ok else None,
-                    "verified_by": str(target_verifier_id),
+                    "verified_by": str(actor_id),
                     "verified_at": now_wib().isoformat(),
                 }
                 if api_key:
@@ -388,13 +391,15 @@ async def verify_all_urls_today(target_date_str: str, actor_id: int, progress_ca
                         fail_delta -= 1
                     
                     try:
-                        await fdb.upsert_progress(
-                            task_id=url_obj["task_id"], user_id=target_verifier_id,
-                            date=url_obj["date"],
-                            submitted_delta=submitted_delta, ok_delta=ok_delta, fail_delta=fail_delta
-                        )
+                        assignee_user = await fdb.get_user(target_assignee_id)
+                        if assignee_user and assignee_user.get("role") == "staff":
+                            await fdb.upsert_progress(
+                                task_id=url_obj["task_id"], user_id=target_assignee_id,
+                                date=url_obj["date"],
+                                submitted_delta=submitted_delta, ok_delta=ok_delta, fail_delta=fail_delta
+                            )
                     except Exception as e:
-                        logger.error(f"[VerifyAll] Gagal update progress untuk user {target_verifier_id}: {e}")
+                        logger.error(f"[VerifyAll] Gagal update progress untuk user {target_assignee_id}: {e}")
 
                 # Update ke Google Sheets (Tulis verifikator asli ke Sheets jika ada, jika tidak gunakan actor_str)
                 try:
@@ -528,18 +533,27 @@ async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=
                     logger.error(f"[SyncStatus] Gagal insert URL baru {payment_url}: {e}")
                     continue
 
-            # Tentukan verifikator
+            # Tentukan assignee untuk progress statistik
+            target_assignee_id = None
+            if assigned_by_str:
+                target_assignee_id = await resolve_user_id_by_string(assigned_by_str)
+            if not target_assignee_id and db_url.get("assigned_to"):
+                try:
+                    target_assignee_id = int(db_url["assigned_to"])
+                except (ValueError, TypeError):
+                    pass
+            if not target_assignee_id and verified_by_str:
+                target_assignee_id = await resolve_user_id_by_string(verified_by_str)
+            if not target_assignee_id and db_url.get("verified_by"):
+                try:
+                    target_assignee_id = int(db_url["verified_by"])
+                except (ValueError, TypeError):
+                    pass
+
+            # Tentukan verifikator untuk field verified_by di DB
             target_verifier_id = None
-            
-            # 1. Cari dari kolom H (Verified By)
             if verified_by_str:
                 target_verifier_id = await resolve_user_id_by_string(verified_by_str)
-            
-            # 2. Cari dari kolom F (Assigned By) jika verifikator kosong
-            if not target_verifier_id and assigned_by_str:
-                target_verifier_id = await resolve_user_id_by_string(assigned_by_str)
-                
-            # 3. Gunakan verifikator di DB jika ada
             if not target_verifier_id and db_url.get("verified_by"):
                 try:
                     target_verifier_id = int(db_url["verified_by"])
@@ -591,17 +605,20 @@ async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=
                             else:
                                 fail_delta -= 1
                                 
-                        try:
-                            await fdb.upsert_progress(
-                                task_id=task_id,
-                                user_id=target_verifier_id,
-                                date=target_date_str,
-                                submitted_delta=submitted_delta,
-                                ok_delta=ok_delta,
-                                fail_delta=fail_delta
-                            )
-                        except Exception as e:
-                            logger.error(f"[SyncStatus] Gagal update progress untuk user {target_verifier_id}: {e}")
+                        if target_assignee_id:
+                            try:
+                                assignee_user = await fdb.get_user(target_assignee_id)
+                                if assignee_user and assignee_user.get("role") == "staff":
+                                    await fdb.upsert_progress(
+                                        task_id=task_id,
+                                        user_id=target_assignee_id,
+                                        date=target_date_str,
+                                        submitted_delta=submitted_delta,
+                                        ok_delta=ok_delta,
+                                        fail_delta=fail_delta
+                                    )
+                            except Exception as e:
+                                logger.error(f"[SyncStatus] Gagal update progress untuk user {target_assignee_id}: {e}")
 
             if progress_callback:
                 await progress_callback(total_processed)

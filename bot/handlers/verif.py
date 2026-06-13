@@ -313,12 +313,19 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"[SheetUpdate] Gagal update sheet auto-verif: {e}")
     asyncio.create_task(bg_sheet())
 
-    await fdb.upsert_progress(
-        task_id=task_id, user_id=user["user_id"], date=today,
-        submitted_delta=1,
-        ok_delta=1 if result.is_ok else 0,
-        fail_delta=0 if result.is_ok else 1,
-    )
+    assignee_id = url_obj.get("assigned_to") or str(user["user_id"])
+    try:
+        assignee_uid = int(assignee_id)
+        assignee_user = await fdb.get_user(assignee_uid)
+        if assignee_user and assignee_user.get("role") == "staff":
+            await fdb.upsert_progress(
+                task_id=task_id, user_id=assignee_uid, date=today,
+                submitted_delta=1,
+                ok_delta=1 if result.is_ok else 0,
+                fail_delta=0 if result.is_ok else 1,
+            )
+    except Exception as e:
+        logger.error(f"Gagal update progress untuk assignee {assignee_id}: {e}")
     await fdb.add_audit_log(
         actor_id=user["user_id"], action="url.verify",
         target_type="sheet_url", target_id=doc_id,
@@ -824,12 +831,19 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         db_update["api_key_status"] = api_key_status
     await fdb.update_sheet_url(doc_id, **db_update)
 
-    await fdb.upsert_progress(
-        task_id=task_id, user_id=user["user_id"], date=today,
-        submitted_delta=1,
-        ok_delta=1 if result.is_ok else 0,
-        fail_delta=0 if result.is_ok else 1,
-    )
+    assignee_id = url_obj.get("assigned_to") or str(user["user_id"])
+    try:
+        assignee_uid = int(assignee_id)
+        assignee_user = await fdb.get_user(assignee_uid)
+        if assignee_user and assignee_user.get("role") == "staff":
+            await fdb.upsert_progress(
+                task_id=task_id, user_id=assignee_uid, date=today,
+                submitted_delta=1,
+                ok_delta=1 if result.is_ok else 0,
+                fail_delta=0 if result.is_ok else 1,
+            )
+    except Exception as e:
+        logger.error(f"Gagal update progress untuk assignee {assignee_id}: {e}")
     await fdb.add_audit_log(
         actor_id=user["user_id"], action="url.verify",
         target_type="sheet_url", target_id=doc_id,
@@ -1107,11 +1121,27 @@ async def cb_url_verify_all_confirm(update: Update, context: ContextTypes.DEFAUL
         }
         # assigned_to hanya diisi sekali (staff asli)
         current_url = await fdb.get_sheet_url(doc_id)
-        if current_url and not current_url.get("assigned_to"):
-            db_update["assigned_to"] = str(user["user_id"])
+        assignee_id = current_url.get("assigned_to") if current_url else None
+        if not assignee_id:
+            assignee_id = str(user["user_id"])
+            db_update["assigned_to"] = assignee_id
         if api_key:
             db_update["api_key_status"] = api_key_status
         await fdb.update_sheet_url(doc_id, **db_update)
+        
+        # Update progress untuk assignee jika role-nya staff
+        try:
+            assignee_uid = int(assignee_id)
+            assignee_user = await fdb.get_user(assignee_uid)
+            if assignee_user and assignee_user.get("role") == "staff":
+                await fdb.upsert_progress(
+                    task_id=task_id, user_id=assignee_uid, date=today,
+                    submitted_delta=1,
+                    ok_delta=1 if result.is_ok else 0,
+                    fail_delta=0 if result.is_ok else 1,
+                )
+        except Exception as e:
+            logger.error(f"Gagal update progress untuk assignee {assignee_id}: {e}")
         
         # 4. Catat audit log
         await fdb.add_audit_log(
@@ -1147,17 +1177,7 @@ async def cb_url_verify_all_confirm(update: Update, context: ContextTypes.DEFAUL
     
     valid_results = [r for r in results if r is not None]
     
-    submitted_delta = len(valid_results)
-    ok_delta = sum(1 for r in valid_results if r.is_ok)
-    fail_delta = submitted_delta - ok_delta
 
-    if submitted_delta > 0:
-        await fdb.upsert_progress(
-            task_id=task_id, user_id=user["user_id"], date=today,
-            submitted_delta=submitted_delta,
-            ok_delta=ok_delta,
-            fail_delta=fail_delta
-        )
 
     try:
         await progress_msg.delete()
@@ -1207,10 +1227,17 @@ async def cb_url_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Reset status kembali ke PROCESSING agar bisa diverif ulang
     # Kurangi fail_delta & submitted_delta yang sudah dihitung sebelumnya
     await fdb.update_sheet_url(doc_id, status="PROCESSING", error_msg=None)
-    await fdb.upsert_progress(
-        task_id=task_id, user_id=user["user_id"], date=today,
-        submitted_delta=-1, ok_delta=0, fail_delta=-1,
-    )
+    assignee_id = url_obj.get("assigned_to") or str(user["user_id"])
+    try:
+        assignee_uid = int(assignee_id)
+        assignee_user = await fdb.get_user(assignee_uid)
+        if assignee_user and assignee_user.get("role") == "staff":
+            await fdb.upsert_progress(
+                task_id=task_id, user_id=assignee_uid, date=today,
+                submitted_delta=-1, ok_delta=0, fail_delta=-1,
+            )
+    except Exception as e:
+        logger.error(f"Gagal update progress untuk retry: {e}")
 
     if flow == "auto":
         await _show_next_pending_url(update, context, task_id, user["user_id"], today)
