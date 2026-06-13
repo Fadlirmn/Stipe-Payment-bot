@@ -429,9 +429,9 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     # 1. Cek PROCESSING
     cursor.execute("""
     SELECT * FROM sheet_urls 
-    WHERE task_id = ? AND date = ? AND status = 'PROCESSING' AND verified_by = ?
+    WHERE task_id = ? AND date = ? AND status = 'PROCESSING' AND (assigned_to = ? OR (assigned_to IS NULL AND verified_by = ?))
     LIMIT 1
-    """, (task_id, date_str, user_id_str))
+    """, (task_id, date_str, user_id_str, user_id_str))
     row = cursor.fetchone()
     if row:
         conn.close()
@@ -440,10 +440,10 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND verified_by = ?
+    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to = ? OR (assigned_to IS NULL AND verified_by = ?))
     ORDER BY created_at ASC, id ASC
     LIMIT 1
-    """, (task_id, date_str, user_id_str))
+    """, (task_id, date_str, user_id_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
     if row_to_claim:
@@ -468,8 +468,8 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     # Hitung total URL yang sudah ter-reserve untuk user ini
     cursor.execute("""
     SELECT COUNT(*) as count FROM sheet_urls
-    WHERE task_id = ? AND date = ? AND status IN ('PENDING', 'PROCESSING') AND verified_by = ?
-    """, (task_id, date_str, user_id_str))
+    WHERE task_id = ? AND date = ? AND status IN ('PENDING', 'PROCESSING') AND (assigned_to = ? OR (assigned_to IS NULL AND verified_by = ?))
+    """, (task_id, date_str, user_id_str, user_id_str))
     total_reserved = cursor.fetchone()["count"]
 
     # Cek progress submit
@@ -485,7 +485,7 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         if remaining_quota > 0:
             cursor.execute("""
             SELECT * FROM sheet_urls
-            WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+            WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '') AND (verified_by IS NULL OR verified_by = '')
             ORDER BY created_at ASC, id ASC
             LIMIT ?
             """, (task_id, date_str, remaining_quota))
@@ -499,10 +499,10 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia (termasuk yang baru ditambah)
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND verified_by = ?
+    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to = ? OR (assigned_to IS NULL AND verified_by = ?))
     ORDER BY created_at ASC, id ASC
     LIMIT 1
-    """, (task_id, date_str, user_id_str))
+    """, (task_id, date_str, user_id_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
     if row_to_claim:
@@ -530,7 +530,7 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
 
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+    WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '') AND (verified_by IS NULL OR verified_by = '')
     ORDER BY created_at ASC, id ASC
     LIMIT ?
     """, (task_id, date_str, block_size))
@@ -607,8 +607,8 @@ def sqlite_list_sheet_urls(task_id: str | None = None, date: str | None = None,
         where_clauses.append("status = ?")
         params.append(status)
     if verified_by:
-        where_clauses.append("verified_by = ?")
-        params.append(str(verified_by))
+        where_clauses.append("(assigned_to = ? OR (assigned_to IS NULL AND verified_by = ?))")
+        params.extend([str(verified_by), str(verified_by)])
 
     where_str = ""
     if where_clauses:
