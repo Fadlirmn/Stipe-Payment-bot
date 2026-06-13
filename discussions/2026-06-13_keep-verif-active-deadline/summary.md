@@ -2,21 +2,21 @@
 
 **Tanggal:** 2026-06-13  
 **Status:** selesai  
-**Versi:** v4
+**Versi:** v5
 
 ## Konteks
-Staff kesulitan melakukan verifikasi ulang pada tautan Stripe Checkout yang gagal setelah deadline tugas terlewati atau kuota harian habis. Selain itu, progress di menu pilihan task sebelumnya menghitung seluruh URL yang diproses (termasuk yang gagal) dan memiliki teks yang redundan. Selain itu, staff mendapatkan tampilan kosong ("Tidak ada URL") pada menu daftar link saat tugas selesai/deadline terlewati jika mereka tidak memiliki URL yang di-assign secara personal.
+Mempermudah verifikasi ulang URL gagal setelah deadline/kuota habis, merapikan progress menu, dan mengotomasi pembagian tugas staf untuk mencegah daftar link kosong.
 
 ## Keputusan & Hasil
-- **Akses Verifikasi Tetap Aktif**: Tombol verifikasi (`⚡ Verif` dan `Verifikasi Sekarang`) tetap ditampilkan dan dapat digunakan walaupun batas waktu terlewati atau kuota penuh.
-- **Tampilan Status Gagal**: Status kegagalan (seperti `HTTP_ERR`, `TIMEOUT`) ditampilkan secara eksplisit di daftar tautan (contoh: `| HTTP_ERR`) untuk mempermudah identifikasi.
-- **Peringatan Deadline**: Notifikasi peringatan deadline ditambahkan pada daftar tautan, detail, dan antrean berikutnya tanpa memblokir alur verifikasi.
-- **Perbaikan Sinkronisasi**: Menyimpan kolom `assigned_to` dari Sheets ke database saat sync status dilakukan, serta memperbolehkan pembaruan status final antar status final lainnya.
-- **Progress Valid (OK) Berbanding Total**: Mengubah tampilan progress pada menu pilihan task agar membandingkan jumlah URL berstatus `OK` dengan total URL (`OK / Total`), serta merapikan duplikasi kurung.
-- **Aksesibilitas Daftar Link untuk Staff**: Jika deadline telah lewat atau semua URL pending telah terproses (tidak ada yang tersisa di pool), staff dapat melihat keseluruhan daftar URL tugas (tidak lagi dibatasi hanya ke milik sendiri) untuk mempermudah verifikasi ulang / retry URL yang gagal.
+- **Akses Tetap Aktif**: Tombol verifikasi selalu aktif/bisa digunakan meski deadline terlewati atau kuota penuh.
+- **Status Gagal Transparan**: Menampilkan kode error (misal: `| HTTP_ERR`) di samping akun pada daftar link.
+- **Progress Valid vs Total**: Menampilkan perbandingan jumlah URL `OK` berbanding total URL di menu pilihan task.
+- **Auto-Assign Tugas**: URL pending otomatis dibagi rata (`ASSIGNED`) ke seluruh staf aktif jika lewat jam 12:00 WIB atau jumlah URL mencukupi kuota total staf.
+- **Dynamic Claim Sebelum Jam 12**: Pengambilan link sebelum jam 12 tetap dinamis (sistem lama) dengan proteksi transaksi (`FOR UPDATE SKIP LOCKED`) untuk menghindari konflik penumpukan.
+- **Perbaikan Bug Kuota**: Mengubah `ensure_quota_synced` agar mengecek `assigned_to` demi akurasi alokasi.
 
 ## Tindak Lanjut
-- [ ] Monitor efektivitas verifikasi ulang oleh staff setelah deadline.
+- [ ] Evaluasi efektivitas alokasi otomatis harian.
 
 ---
 *Dibuat otomatis oleh agent · maks. 200 kata*
