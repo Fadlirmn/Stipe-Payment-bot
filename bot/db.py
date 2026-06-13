@@ -92,6 +92,9 @@ async def ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> list
     """Pastikan reserved block user sesuai quota terbaru. Return list URL yang baru di-assign."""
     return await asyncio.to_thread(pgdb.postgres_ensure_quota_synced, task_id, date_str, user_id)
 
+async def reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
+    return await asyncio.to_thread(pgdb.postgres_reset_task_today, task_id, date_str)
+
 
 
 

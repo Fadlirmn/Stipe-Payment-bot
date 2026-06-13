@@ -25,6 +25,22 @@ When staff claimed links via the bot's "Ambil Link" (get_or_claim_next_url), the
 - `bot/postgres_db.py`
 - `bot/sqlite_db.py`
 
+## [2026-06-13] - Reset DB before Manual Sync Sheet
+
+### Context
+When administrators or developers trigger a manual "Sync Sheet" action, they expect a fresh sync that completely reflects the current state of Google Sheets, including correcting any previously synced/assigned links if the spreadsheet was cleared or changed. Previously, manual sync only appended or updated in place, which could leave orphaned or conflicting links in the database.
+
+### Decisions
+1. **Destructive Manual Sync**: Add a `reset_task_today` helper in PostgreSQL and SQLite databases that clears the daily URLs and task progress for a given task.
+2. **Auto-reset before manual pull**: Intercept manual sync callbacks (`cb_task_sync_sheet` and `_dev_action` sync) to run `reset_task_today` prior to fetching rows from Google Sheets.
+3. **Preserve background sync safety**: Keep background scheduler auto-sync non-destructive (no database reset) to import newly added links incrementally without losing staff progress.
+
+### Affected Files
+- `bot/postgres_db.py`
+- `bot/sqlite_db.py`
+- `bot/db.py`
+- `bot/handlers/admin.py`
+
 ## [2026-06-13] - Query Daily Report Metrics Directly from sheet_urls
 
 ### Context

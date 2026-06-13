@@ -764,3 +764,15 @@ def sqlite_sync_task_assignments(task_id: str, date_str: str) -> list[dict]:
     conn.commit()
     conn.close()
     return newly_assigned_urls
+
+
+def sqlite_reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM sheet_urls WHERE task_id = ? AND date = ?", (task_id, date_str))
+    urls_deleted = cursor.rowcount
+    cursor.execute("DELETE FROM task_progress WHERE id LIKE ? AND date = ?", (f"{task_id}_%", date_str))
+    progress_deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return urls_deleted, progress_deleted

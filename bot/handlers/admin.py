@@ -472,6 +472,8 @@ async def cb_task_sync_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     from bot.handlers.verif import _sync_sheet_to_db
     today = datetime.now(TZ).date().isoformat()
+    # Reset DB untuk task ini pada hari ini sebelum sync
+    await fdb.reset_task_today(task_id, today)
     count, err = await _sync_sheet_to_db(task, today)
 
     if err:
@@ -791,6 +793,8 @@ async def _dev_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action
                 )
             except Exception:
                 pass
+            # Reset DB untuk task ini pada hari ini sebelum sync
+            await fdb.reset_task_today(t["task_id"], today)
             count, err = await _sync_sheet_to_db(t, today)
             results.append(f"• `{t['id'][:20]}`: +{count} URL" + (f" ⚠️{err}" if err else ""))
         try:

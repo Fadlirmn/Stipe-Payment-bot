@@ -1010,3 +1010,16 @@ def postgres_sync_task_assignments(task_id: str, date_str: str) -> list[dict]:
     return [dict_clean(r) for r in newly_assigned_urls]
 
 
+def postgres_reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM sheet_urls WHERE task_id = %s AND date = %s", (task_id, date_str))
+    urls_deleted = cursor.rowcount
+    cursor.execute("DELETE FROM task_progress WHERE id LIKE %s AND date = %s", (f"{task_id}_%", date_str))
+    progress_deleted = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return urls_deleted, progress_deleted
+
+

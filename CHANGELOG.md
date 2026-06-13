@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - `[Changed]` Rename parameter `target_date_utc` → `target_date_str` di fungsi `reconcile_and_verify_failed_urls`, `verify_all_urls_today`, dan `sync_status_from_sheets_to_db` untuk kejelasan.
 - `[Changed]` Scripts `compare_db_sheets.py` dan `restore_sheets_assignment.py` diupdate dari UTC ke WIB.
 - `[Changed]` Updated daily report, EOD summary scheduler, and dashboard stats (Staff Monitor & Rate per User) to group strictly by `assigned_to` instead of `verified_by`, normalized metrics to Submitted, OK, and Gagal (any non-OK status), and added OK/task completion percentage formatting.
+- `[Changed]` Manual "Sync Sheet" actions (both single task and global dev sync) now automatically reset/clear the database URLs and progress logs for the current date before pulling fresh URLs from Google Sheets to ensure a clean sync. Background scheduler auto-sync remains non-destructive.
 
 ## [2026-06-13] — Refactor Staff Bulk Verification Screen
 
@@ -122,3 +123,4 @@ All notable changes to this project will be documented in this file.
 
 
 
+a fitur inti: **cek link** (verifikasi URL Stripe) dan **sync ke Google Shee
