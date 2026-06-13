@@ -519,10 +519,10 @@ async def _show_url_list(
     offset = (page - 1) * limit
 
     # Sync quota dulu — pastikan reserved block sesuai quota terbaru dari DB
+    # Staff SELALU hanya lihat URL miliknya sendiri
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
-        if quota_staff > 0:
-            verified_by_filter = str(user["user_id"])
+        verified_by_filter = str(user["user_id"])
         if not quota_exceeded:
             newly_assigned = await fdb.ensure_quota_synced(task_id, today, user["user_id"])
             if newly_assigned:
@@ -670,6 +670,14 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not url_obj:
         await update.callback_query.message.reply_text("❌ URL tidak ditemukan.")
         return
+
+    # Staff hanya bisa lihat detail URL miliknya sendiri
+    user = await get_or_create_user(update)
+    if user.get("role") not in ("admin", "dev"):
+        owner = url_obj.get("assigned_to") or url_obj.get("verified_by")
+        if owner and str(owner) != str(user["user_id"]):
+            await update.callback_query.message.reply_text("⛔ URL ini bukan milik Anda.")
+            return
         
     task_id = url_obj["task_id"]
     today = url_obj["date"]
@@ -762,6 +770,13 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.callback_query.message.reply_text("❌ URL tidak ditemukan.")
         return
 
+    # Staff hanya bisa verif URL miliknya sendiri
+    if user.get("role") not in ("admin", "dev"):
+        owner = url_obj.get("assigned_to") or url_obj.get("verified_by")
+        if owner and str(owner) != str(user["user_id"]):
+            await update.callback_query.message.reply_text("⛔ URL ini bukan milik Anda.")
+            return
+
     payment_url = url_obj["payment_url"]
     task_id     = url_obj["task_id"]
     today       = url_obj["date"]
@@ -781,6 +796,9 @@ async def cb_url_verify_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         "verified_by": user["user_id"],
         "verified_at": now_wib().isoformat(),
     }
+    # assigned_to hanya diisi sekali (staff asli)
+    if not url_obj.get("assigned_to"):
+        db_update["assigned_to"] = str(user["user_id"])
     if api_key:
         db_update["api_key_status"] = api_key_status
     await fdb.update_sheet_url(doc_id, **db_update)
@@ -845,6 +863,13 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     url_obj = await fdb.get_sheet_url(doc_id)
     if url_obj:
+        # Staff hanya bisa skip URL miliknya sendiri
+        if user.get("role") not in ("admin", "dev"):
+            owner = url_obj.get("assigned_to") or url_obj.get("verified_by")
+            if owner and str(owner) != str(user["user_id"]):
+                await update.callback_query.message.reply_text("⛔ URL ini bukan milik Anda.")
+                return
+
         # Check quota per staff harian
         task = await fdb.get_task(url_obj["task_id"])
         quota_staff = task.get("quota_per_staff", 0) if task else 0
@@ -1148,6 +1173,13 @@ async def cb_url_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not url_obj:
         await update.callback_query.message.reply_text("❌ URL tidak ditemukan.")
         return
+
+    # Staff hanya bisa retry URL miliknya sendiri
+    if user.get("role") not in ("admin", "dev"):
+        owner = url_obj.get("assigned_to") or url_obj.get("verified_by")
+        if owner and str(owner) != str(user["user_id"]):
+            await update.callback_query.message.reply_text("⛔ URL ini bukan milik Anda.")
+            return
 
     task_id = url_obj["task_id"]
 
