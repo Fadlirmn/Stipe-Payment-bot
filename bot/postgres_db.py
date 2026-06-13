@@ -581,9 +581,9 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
         # Update status menjadi PROCESSING
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', assigned_at = %s
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
         WHERE id = %s
-        """, (now.isoformat(), row_to_claim["id"]))
+        """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
@@ -628,8 +628,8 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
             extra_rows = cursor.fetchall()
             for r in extra_rows:
                 cursor.execute("""
-                UPDATE sheet_urls SET verified_by = %s WHERE id = %s
-                """, (user_id_str, r["id"]))
+                UPDATE sheet_urls SET verified_by = %s, assigned_to = COALESCE(assigned_to, %s) WHERE id = %s
+                """, (user_id_str, user_id_str, r["id"]))
             if extra_rows:
                 conn.commit()
 
@@ -646,9 +646,9 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', assigned_at = %s
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
         WHERE id = %s
-        """, (now.isoformat(), row_to_claim["id"]))
+        """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
@@ -682,17 +682,17 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
         first_row = rows[0]
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s
+        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
         WHERE id = %s
-        """, (user_id_str, now.isoformat(), first_row["id"]))
+        """, (user_id_str, now.isoformat(), user_id_str, first_row["id"]))
 
         # Sisa baris kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
         for r in rows[1:]:
             cursor.execute("""
             UPDATE sheet_urls
-            SET verified_by = %s
+            SET verified_by = %s, assigned_to = COALESCE(assigned_to, %s)
             WHERE id = %s
-            """, (user_id_str, r["id"]))
+            """, (user_id_str, user_id_str, r["id"]))
 
         conn.commit()
 
@@ -717,9 +717,9 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s
+        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
         WHERE id = %s
-        """, (user_id_str, now.isoformat(), row_to_claim["id"]))
+        """, (user_id_str, now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"

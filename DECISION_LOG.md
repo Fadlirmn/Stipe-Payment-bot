@@ -12,6 +12,19 @@ When syncing status back from Google Sheets to the Database (via `sync_status_fr
 ### Affected Files
 - `bot/services/sheet_parser.py`
 
+## [2026-06-13] - Populate assigned_to on Link Claim
+
+### Context
+When staff claimed links via the bot's "Ambil Link" (get_or_claim_next_url), the database only updated `verified_by` to the claiming user, leaving `assigned_to` empty. Since dashboard statistics and bot reports were changed to group strictly by the immutable `assigned_to` field, the claimed URLs did not show up in the users' stats.
+
+### Decisions
+1. **Populate assigned_to during claims**: Update `postgres_get_or_claim_next_url` and `sqlite_get_or_claim_next_url` to set `assigned_to` using `COALESCE(assigned_to, ?)` or `COALESCE(assigned_to, %s)` whenever a link is claimed, reserved, or stolen (if it was somehow left empty).
+2. **Prevent race conditions / conflicts**: Using `COALESCE` guarantees that if `assigned_to` is already populated, it will not be overwritten (preserving the original attribution even if another user helps verify the URL).
+
+### Affected Files
+- `bot/postgres_db.py`
+- `bot/sqlite_db.py`
+
 ## [2026-06-13] - Query Daily Report Metrics Directly from sheet_urls
 
 ### Context

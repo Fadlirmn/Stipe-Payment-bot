@@ -450,9 +450,9 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         # Update status menjadi PROCESSING
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', assigned_at = ?
+        SET status = 'PROCESSING', assigned_at = ?, assigned_to = COALESCE(assigned_to, ?)
         WHERE id = ?
-        """, (now.isoformat(), row_to_claim["id"]))
+        """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
@@ -491,8 +491,8 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
             """, (task_id, date_str, remaining_quota))
             extra_rows = cursor.fetchall()
             for r in extra_rows:
-                cursor.execute("UPDATE sheet_urls SET verified_by = ? WHERE id = ?",
-                               (user_id_str, r["id"]))
+                cursor.execute("UPDATE sheet_urls SET verified_by = ?, assigned_to = COALESCE(assigned_to, ?) WHERE id = ?",
+                               (user_id_str, user_id_str, r["id"]))
             if extra_rows:
                 conn.commit()
 
@@ -508,9 +508,9 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', assigned_at = ?
+        SET status = 'PROCESSING', assigned_at = ?, assigned_to = COALESCE(assigned_to, ?)
         WHERE id = ?
-        """, (now.isoformat(), row_to_claim["id"]))
+        """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
@@ -541,17 +541,17 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
         first_row = rows[0]
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', verified_by = ?, assigned_at = ?
+        SET status = 'PROCESSING', verified_by = ?, assigned_at = ?, assigned_to = COALESCE(assigned_to, ?)
         WHERE id = ?
-        """, (user_id_str, now.isoformat(), first_row["id"]))
+        """, (user_id_str, now.isoformat(), user_id_str, first_row["id"]))
 
         # Sisa baris kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
         for r in rows[1:]:
             cursor.execute("""
             UPDATE sheet_urls
-            SET verified_by = ?
+            SET verified_by = ?, assigned_to = COALESCE(assigned_to, ?)
             WHERE id = ?
-            """, (user_id_str, r["id"]))
+            """, (user_id_str, user_id_str, r["id"]))
 
         conn.commit()
 
@@ -574,9 +574,9 @@ def sqlite_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) -> t
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', verified_by = ?, assigned_at = ?
+        SET status = 'PROCESSING', verified_by = ?, assigned_at = ?, assigned_to = COALESCE(assigned_to, ?)
         WHERE id = ?
-        """, (user_id_str, now.isoformat(), row_to_claim["id"]))
+        """, (user_id_str, now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
