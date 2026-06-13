@@ -88,13 +88,12 @@ async def job_local_backup():
 
 
 async def job_auto_verify_failed(app):
-    from datetime import timezone
-    today_utc = datetime.now(timezone.utc).date().isoformat()
-    logger.info(f"[Scheduler] Starting auto-verify failed URLs for {today_utc} UTC")
+    today = datetime.now(TZ).date().isoformat()
+    logger.info(f"[Scheduler] Starting auto-verify failed URLs for {today} WIB")
     
     try:
         from bot.services.sheet_parser import reconcile_and_verify_failed_urls
-        res = await reconcile_and_verify_failed_urls(today_utc)
+        res = await reconcile_and_verify_failed_urls(today)
         logger.info(
             f"[Scheduler] Auto-verify finished: total={res['total_failed']}, "
             f"reconciled_ok={res['sync_ok_count']}, "

@@ -966,12 +966,11 @@ async def cmd_retry_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_or_create_user(update)
 
-    # Gunakan UTC sebagai patokan tanggal hari ini
-    from datetime import timezone
-    today_utc = datetime.now(timezone.utc).date().isoformat()
+    # Gunakan WIB sebagai patokan tanggal hari ini (konsisten dengan seluruh sistem)
+    today = datetime.now(TZ).date().isoformat()
 
     status_msg = await update.message.reply_text(
-        f"⏳ *Memulai Re-verifikasi & Rekonsiliasi dengan Google Sheets ({today_utc} UTC)...*",
+        f"⏳ *Memulai Re-verifikasi & Rekonsiliasi dengan Google Sheets ({today} WIB)...*",
         parse_mode="Markdown"
     )
 
@@ -994,10 +993,10 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-        res = await reconcile_and_verify_failed_urls(today_utc, actor_id=user["user_id"], progress_callback=progress_cb)
+        res = await reconcile_and_verify_failed_urls(today, actor_id=user["user_id"], progress_callback=progress_cb)
 
         await update.message.reply_text(
-            f"✅ *Re-verifikasi Selesai — {today_utc} (UTC)*\n\n"
+            f"✅ *Re-verifikasi Selesai — {today} (WIB)*\n\n"
             f"*Sync dari Sheets:*\n"
             f"  • Sudah disubmit (skip reverif): `{res['already_done_count']}`\n"
             f"  • DB diupdate → OK             : `{res['sync_ok_count']}`\n\n"
@@ -1020,11 +1019,10 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_role("admin", "dev")
 async def cmd_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_or_create_user(update)
-    from datetime import timezone
-    today_utc = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(TZ).date().isoformat()
 
     status_msg = await update.message.reply_text(
-        f"⏳ *Memulai Verifikasi Massal & Update Sheets untuk Semua Link Hari Ini ({today_utc} UTC)...*",
+        f"⏳ *Memulai Verifikasi Massal & Update Sheets untuk Semua Link Hari Ini ({today} WIB)...*",
         parse_mode="Markdown"
     )
 
@@ -1047,10 +1045,10 @@ async def cmd_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
 
-        res = await verify_all_urls_today(today_utc, actor_id=user["user_id"], progress_callback=progress_cb)
+        res = await verify_all_urls_today(today, actor_id=user["user_id"], progress_callback=progress_cb)
 
         await update.message.reply_text(
-            f"✅ *Verifikasi Massal Selesai — {today_utc} (UTC)*\n\n"
+            f"✅ *Verifikasi Massal Selesai — {today} (WIB)*\n\n"
             f"  • Total URL Diproses : `{res['total']}`\n"
             f"  • 🟢 OK              : `{res['ok']}`\n"
             f"  • 🟡 FAIL / HTTP-ERR : `{res['fail']}`\n\n"
@@ -1083,12 +1081,11 @@ async def cmd_sync_status_to_db(update: Update, context: ContextTypes.DEFAULT_TY
     Sinkronisasi status hasil akhir verifikasi (Kolom G) dan verifikator (Kolom H)
     dari Google Sheets kembali ke database PostgreSQL, serta memperbarui task_progress.
     """
-    from datetime import timezone
     from bot.services.sheet_parser import sync_status_from_sheets_to_db
 
-    today_utc = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(TZ).date().isoformat()
     status_msg = await update.message.reply_text(
-        f"⏳ *Memulai sinkronisasi status Sheets → DB ({today_utc} UTC)...*",
+        f"⏳ *Memulai sinkronisasi status Sheets → DB ({today} WIB)...*",
         parse_mode="Markdown"
     )
 
@@ -1108,7 +1105,7 @@ async def cmd_sync_status_to_db(update: Update, context: ContextTypes.DEFAULT_TY
                 except Exception:
                     pass
 
-        res = await sync_status_from_sheets_to_db(today_utc, progress_callback=progress_cb)
+        res = await sync_status_from_sheets_to_db(today, progress_callback=progress_cb)
         
         err_text = ""
         if res.get("errors"):
@@ -1116,7 +1113,7 @@ async def cmd_sync_status_to_db(update: Update, context: ContextTypes.DEFAULT_TY
             err_text = f"\n⚠️ *Errors:*\n" + "\n".join(f"  • {err}" for err in escaped_errors)
 
         await update.message.reply_text(
-            f"✅ *Sinkronisasi Status Selesai ({today_utc} UTC)*\n\n"
+            f"✅ *Sinkronisasi Status Selesai ({today} WIB)*\n\n"
             f"  • Total URL Diproses : `{res['processed']}`\n"
             f"  • Status Diperbarui : `{res['updated']}`"
             f"{err_text}",
@@ -1132,10 +1129,9 @@ async def cmd_sync_status_to_db(update: Update, context: ContextTypes.DEFAULT_TY
 
 @require_role("admin", "dev")
 async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from datetime import timezone
     from bot.services.sheet_parser import update_sheet_status
 
-    today_utc = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(TZ).date().isoformat()
 
     status_msg = await update.message.reply_text(
         "⏳ *Mengambil data verifikasi hari ini untuk dikirim ke Sheets...*",
@@ -1157,7 +1153,7 @@ async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT
 
             # Ambil semua URL hari ini dari DB
             urls, _ = await fdb.list_sheet_urls(
-                task_id=task_id, date=today_utc, limit=1000
+                task_id=task_id, date=today, limit=1000
             )
 
             # Filter yang statusnya terverifikasi (bukan PENDING/PROCESSING)
@@ -1197,7 +1193,7 @@ async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT
                 await asyncio.gather(*tasks_to_run)
 
         await update.message.reply_text(
-            f"✅ *Push Status Selesai ({today_utc} UTC)*\n\n"
+            f"✅ *Push Status Selesai ({today} WIB)*\n\n"
             f"• Berhasil ditulis ulang ke Sheets : `{total_pushed}`\n"
             f"• Error                              : `{errors}`\n\n"
             f"_Seluruh status verifikasi berhasil disinkronisasikan ke Google Sheets._",

@@ -60,6 +60,7 @@ def sqlite_init_db():
         status TEXT DEFAULT 'PENDING',
         http_code INTEGER,
         error_msg TEXT,
+        assigned_to TEXT,
         verified_by TEXT,
         verified_at TEXT,
         created_at TEXT,
@@ -73,6 +74,15 @@ def sqlite_init_db():
         pass
     try:
         cursor.execute("ALTER TABLE sheet_urls ADD COLUMN api_key_status TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sheet_urls ADD COLUMN assigned_to TEXT")
+    except Exception:
+        pass
+    # Migrasi: isi assigned_to dari verified_by untuk data lama
+    try:
+        cursor.execute("UPDATE sheet_urls SET assigned_to = verified_by WHERE assigned_to IS NULL AND verified_by IS NOT NULL")
     except Exception:
         pass
     cursor.execute("""
@@ -108,10 +118,11 @@ def dict_factory(cursor, row):
     # Convert is_active to boolean
     if "is_active" in d:
         d["is_active"] = bool(d["is_active"])
-    # Parse JSON for assigned_to
+    # Parse JSON for assigned_to (hanya untuk tabel tasks yang menyimpan JSON array)
     if "assigned_to" in d and d["assigned_to"]:
         try:
-            d["assigned_to"] = json.loads(d["assigned_to"])
+            if isinstance(d["assigned_to"], str) and d["assigned_to"].startswith("["):
+                d["assigned_to"] = json.loads(d["assigned_to"])
         except Exception:
             pass
     return d

@@ -71,6 +71,7 @@ def postgres_init_db():
         status TEXT DEFAULT 'PENDING',
         http_code INTEGER,
         error_msg TEXT,
+        assigned_to TEXT,
         verified_by TEXT,
         verified_at TEXT,
         created_at TEXT,
@@ -84,6 +85,15 @@ def postgres_init_db():
         conn.rollback()
     try:
         cursor.execute("ALTER TABLE sheet_urls ADD COLUMN api_key_status TEXT")
+    except Exception:
+        conn.rollback()
+    try:
+        cursor.execute("ALTER TABLE sheet_urls ADD COLUMN assigned_to TEXT")
+    except Exception:
+        conn.rollback()
+    # Migrasi: isi assigned_to dari verified_by untuk data lama yang belum punya assigned_to
+    try:
+        cursor.execute("UPDATE sheet_urls SET assigned_to = verified_by WHERE assigned_to IS NULL AND verified_by IS NOT NULL")
     except Exception:
         conn.rollback()
     
@@ -115,6 +125,7 @@ def postgres_init_db():
     # 6. Indexes for query and claim performance optimization
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_task_date_status ON sheet_urls (task_id, date, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_verified_by ON sheet_urls (verified_by)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_assigned_to ON sheet_urls (assigned_to)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sheet_urls_url ON sheet_urls (payment_url)")
     
     conn.commit()
@@ -202,7 +213,9 @@ def dict_clean(d):
         res["is_active"] = bool(res["is_active"])
     if "assigned_to" in res and res["assigned_to"]:
         try:
-            if isinstance(res["assigned_to"], str):
+            # Hanya parse JSON jika terlihat seperti array (untuk tabel tasks).
+            # sheet_urls.assigned_to berisi plain user_id text, JANGAN di-parse.
+            if isinstance(res["assigned_to"], str) and res["assigned_to"].startswith("["):
                 res["assigned_to"] = json.loads(res["assigned_to"])
         except Exception:
             pass

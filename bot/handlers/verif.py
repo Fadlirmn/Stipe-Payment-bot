@@ -127,12 +127,15 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             if assigned_user_id:
                 db_url = await fdb.get_sheet_url(doc_id)
                 if db_url and db_url.get("status") in ("PENDING", "PROCESSING") and db_url.get("verified_by") != assigned_user_id:
-                    await fdb.update_sheet_url(
-                        doc_id,
-                        status="PROCESSING",
-                        verified_by=assigned_user_id,
-                        assigned_at=now_wib().isoformat()
-                    )
+                    update_data = {
+                        "status": "PROCESSING",
+                        "verified_by": assigned_user_id,
+                        "assigned_at": now_wib().isoformat()
+                    }
+                    # assigned_to hanya diisi sekali, tidak pernah ditimpa
+                    if not db_url.get("assigned_to"):
+                        update_data["assigned_to"] = assigned_user_id
+                    await fdb.update_sheet_url(doc_id, **update_data)
             continue
 
         await fdb.add_sheet_url(
@@ -150,6 +153,7 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             await fdb.update_sheet_url(
                 doc_id,
                 status="PROCESSING",
+                assigned_to=assigned_user_id,
                 verified_by=assigned_user_id,
                 assigned_at=now_wib().isoformat()
             )
@@ -273,6 +277,9 @@ async def cb_url_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "verified_by": user["user_id"],
         "verified_at": now_wib().isoformat(),
     }
+    # assigned_to hanya diisi sekali (staff asli), tidak pernah ditimpa
+    if not url_obj.get("assigned_to"):
+        db_update["assigned_to"] = str(user["user_id"])
     if api_key:
         db_update["api_key_status"] = api_key_status
     await fdb.update_sheet_url(doc_id, **db_update)
@@ -618,8 +625,8 @@ async def _show_url_list(
     if row:
         kb_rows.append(row)
 
-    # Tombol "Verif Semua PENDING" hanya muncul jika quota belum penuh
-    if urls and not quota_exceeded:
+    # Selalu tampilkan tombol "⚡ Verif Semua PENDING" agar staff bisa klik dan melihat status link aktif & link semuanya
+    if urls:
         kb_rows.append([InlineKeyboardButton(
             "⚡ Verif Semua PENDING", callback_data=f"url:verify_all:{task_id}:{page}"
         )])
@@ -863,7 +870,90 @@ async def cb_url_skip_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer("⏳ Memverifikasi semua URL PENDING...")
+    await update.callback_query.answer()
+    parts = update.callback_query.data.split(":")
+    task_id = parts[2]
+    page = int(parts[3])
+    user = await get_or_create_user(update)
+    today = datetime.now(TZ).date().isoformat()
+
+    task = await fdb.get_task(task_id)
+    if not task:
+        await update.callback_query.message.reply_text("❌ Task tidak ditemukan.")
+        return
+
+    # Check quota per staff harian
+    quota_staff = task.get("quota_per_staff", 0)
+    submitted = 0
+    remaining_quota = 999999
+    if quota_staff > 0:
+        prog = await fdb.get_progress(task_id, user["user_id"], today)
+        submitted = prog.get("submitted", 0) if prog else 0
+        remaining_quota = max(0, quota_staff - submitted)
+
+    # Ambil link status counts
+    ok_count = await fdb.count_sheet_urls(task_id, today, status="OK")
+    total_count = await fdb.count_sheet_urls(task_id, today)
+
+    # Ambil semua URL PENDING dan PROCESSING untuk hari ini untuk dihitung total yang belum terverifikasi
+    verified_by_filter = None
+    if user.get("role") not in ("admin", "dev"):
+        if quota_staff > 0:
+            verified_by_filter = str(user["user_id"])
+    
+    pending_urls, _ = await fdb.list_sheet_urls(
+        task_id=task_id, date=today, status="PENDING", limit=500, verified_by=verified_by_filter
+    )
+    processing_urls, _ = await fdb.list_sheet_urls(
+        task_id=task_id, date=today, status="PROCESSING", limit=500, verified_by=verified_by_filter
+    )
+    urls_to_verify_all = processing_urls + pending_urls
+    pending_count = len(urls_to_verify_all)
+
+    # Buat progress bar untuk kontribusi staff harian
+    quota_str = f"/{quota_staff}" if quota_staff > 0 else " (unlimited)"
+    contrib_progress = f"{submitted}{quota_str}"
+    if quota_staff > 0:
+        bar = progress_bar(submitted, quota_staff)
+        contrib_progress = f"{bar} ({submitted}/{quota_staff})"
+
+    text = (
+        f"📋 *STATUS VERIFIKASI TASK*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 Task       : `{task_id}`\n"
+        f"📅 Tanggal    : {today}\n"
+        f"🟢 Link Aktif : {ok_count} URL\n"
+        f"📊 Link Semua : {total_count} URL\n"
+        f"👤 Kontribusi : {contrib_progress}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 *Tanggung Jawab Staff:*\n"
+        f"_Verifikasi massal memproses semua URL PENDING otomatis. Pastikan Anda tetap memantau validitas link jika ada kendala._\n"
+    )
+
+    kb_rows = []
+    # Jika kuota penuh (remaining_quota <= 0) ATAU tidak ada pending, tidak bisa/perlu verif massal
+    if remaining_quota <= 0:
+        kb_rows.append([InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")])
+    elif pending_count == 0:
+        text += f"\n📭 _Tidak ada URL PENDING atau PROCESSING yang perlu diverifikasi._"
+        kb_rows.append([InlineKeyboardButton("🔙 Kembali ke List", callback_data=f"url:list_page:{task_id}:{page}")])
+    else:
+        text += f"\nApakah Anda yakin ingin memproses *{min(pending_count, remaining_quota)}* URL secara otomatis?"
+        kb_rows.append([
+            InlineKeyboardButton("✅ Ya, Jalankan Verifikasi", callback_data=f"url:verify_confirm:{task_id}:{page}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"url:list_page:{task_id}:{page}")
+        ])
+
+    markup = InlineKeyboardMarkup(kb_rows)
+    msg = update.callback_query.message
+    try:
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        await msg.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def cb_url_verify_all_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("⏳ Memulai verifikasi massal...")
     parts = update.callback_query.data.split(":")
     task_id = parts[2]
     page = int(parts[3])
@@ -883,12 +973,7 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         submitted = prog.get("submitted", 0) if prog else 0
         remaining_quota = max(0, quota_staff - submitted)
         if remaining_quota <= 0:
-            await update.callback_query.message.reply_text(
-                f"⚠️ *Kuota Staff Terpenuhi!*\n"
-                f"Anda telah memproses {submitted}/{quota_staff} URL untuk task ini hari ini.",
-                parse_mode="Markdown",
-                reply_markup=back_keyboard()
-            )
+            await _show_url_list(update, context, task_id, today, page)
             return
 
     # Ambil semua URL PENDING dan PROCESSING untuk hari ini
@@ -907,24 +992,45 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     urls_to_verify_all = processing_urls + pending_urls
 
     if not urls_to_verify_all:
-        await update.callback_query.message.reply_text(
-            "📭 Tidak ada URL PENDING atau PROCESSING yang perlu diverifikasi.",
-            reply_markup=back_keyboard()
-        )
+        await _show_url_list(update, context, task_id, today, page)
         return
 
     # Batasi dengan remaining_quota
     urls_to_verify = urls_to_verify_all[:remaining_quota]
+    total_to_verify = len(urls_to_verify)
     
     # Beri tahu user bahwa proses sedang berjalan
     progress_msg = await update.callback_query.message.reply_text(
-        f"⏳ Memproses verifikasi *{len(urls_to_verify)}* URL secara massal...",
+        f"⏳ *Memproses verifikasi... (0/{total_to_verify})*\n"
+        f"Mohon tunggu sebentar, sedang memvalidasi link...",
         parse_mode="Markdown"
     )
+
+    processed_count = 0
+    last_edit_time = 0
+    progress_lock = asyncio.Lock()
+
+    async def update_progress_cb():
+        nonlocal last_edit_time
+        import time
+        now = time.time()
+        # Throttling to prevent Telegram API rate limiting (min 1.5s interval or final edit)
+        if now - last_edit_time > 1.5 or processed_count == total_to_verify:
+            last_edit_time = now
+            try:
+                anim_emoji = ["⏳", "🔍", "⚡", "🔄"][processed_count % 4]
+                await progress_msg.edit_text(
+                    f"{anim_emoji} *Memproses verifikasi... ({processed_count}/{total_to_verify})*\n"
+                    f"Mohon tunggu sebentar, sedang memvalidasi link...",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
     sem = asyncio.Semaphore(5)
 
     async def verify_and_update(url_obj):
+        nonlocal processed_count
         async with sem:
             doc_id = url_obj["id"]
             payment_url = url_obj["payment_url"]
@@ -938,6 +1044,9 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             logger.warning(f"Failed to mark as processing {doc_id}: {e}")
+            async with progress_lock:
+                processed_count += 1
+                await update_progress_cb()
             return None
             
         # 2. Verifikasi URL / API Key
@@ -979,6 +1088,10 @@ async def cb_url_verify_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"[SheetUpdate] Gagal update status Google Sheet untuk verify_all: {e}")
         asyncio.create_task(bg_update_sheet_bulk())
         
+        async with progress_lock:
+            processed_count += 1
+            await update_progress_cb()
+            
         return result
 
     tasks_to_run = [verify_and_update(u) for u in urls_to_verify]
@@ -1062,6 +1175,7 @@ def get_handlers():
         CallbackQueryHandler(cb_url_retry,         pattern=r"^url:retry:.+$"),
         CallbackQueryHandler(cb_url_verify,        pattern=r"^url:verify:.+$"),
         CallbackQueryHandler(cb_url_skip,          pattern=r"^url:skip:.+$"),
+        CallbackQueryHandler(cb_url_verify_all_confirm, pattern=r"^url:verify_confirm:.+$"),
         CallbackQueryHandler(cb_url_verify_all,    pattern=r"^url:verify_all:.+$"),
         CallbackQueryHandler(cb_menu_sync_sheet,   pattern="^menu:sync_sheet$"),
     ]

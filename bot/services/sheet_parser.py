@@ -31,6 +31,19 @@ def _is_stripe_url(url: str) -> bool:
     return bool(stripe_domains.match(url.strip()))
 
 
+def _normalize_status(status: str) -> str:
+    """Normalisasi status ke canonical value. SUCCESS → OK."""
+    s = status.strip().upper()
+    if s == "SUCCESS":
+        return "OK"
+    return s
+
+
+def _is_ok_status(status: str | None) -> bool:
+    """Cek apakah status termasuk OK (termasuk legacy SUCCESS)."""
+    return status in ("OK", "SUCCESS")
+
+
 # ── Public API ────────────────────────────────────────────
 
 async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date] = None, all_rows: bool = False) -> list[dict]:
@@ -124,7 +137,7 @@ async def update_sheet_status(stripe_url: str, status: str, tab_name: str = "She
         return False
 
 
-async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optional[int] = None, progress_callback = None) -> dict:
+async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optional[int] = None, progress_callback = None) -> dict:
     """
     Melakukan verifikasi ulang terhadap URL yang gagal di database dengan mengacu pada Google Sheets.
     Jika URL gagal di DB ternyata sudah tidak ada di baris pending Google Sheets (artinya sudah sukses/OK di Sheets),
@@ -145,7 +158,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
     from bot.utils.formatters import now_wib
     import asyncio
 
-    logger.info(f"[Reconciler] Memulai rekonsiliasi & re-verifikasi untuk tanggal {target_date_utc} UTC")
+    logger.info(f"[Reconciler] Memulai rekonsiliasi & re-verifikasi untuk tanggal {target_date_str}")
 
     # 1. Ambil semua task aktif
     all_tasks = await fdb.list_tasks()
@@ -161,7 +174,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
         tabs_seen.add(tab)
         try:
             # fetch_today_urls mengembalikan baris yang belum final status
-            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_utc))
+            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_str))
             for r in rows:
                 sheet_pending_urls.add(r["payment_url"].strip())
         except Exception as e:
@@ -169,9 +182,9 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
             raise RuntimeError(f"Gagal memanggil Google Sheets untuk tab '{tab}': {e}")
 
     # 3. Ambil URL failed dari DB
-    failed_urls = await fdb.get_all_failed_urls(date_str=target_date_utc)
+    failed_urls = await fdb.get_all_failed_urls(date_str=target_date_str)
     if not failed_urls:
-        logger.info(f"[Reconciler] Tidak ada URL gagal di DB untuk tanggal {target_date_utc}")
+        logger.info(f"[Reconciler] Tidak ada URL gagal di DB untuk tanggal {target_date_str}")
         return {
             "already_done_count": 0,
             "sync_ok_count": 0,
@@ -271,7 +284,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
         await asyncio.gather(*(re_verify_one(u) for u in need_reverif), return_exceptions=True)
 
     logger.info(
-        f"[Reconciler] Selesai rekonsiliasi & re-verifikasi untuk {target_date_utc}. "
+        f"[Reconciler] Selesai rekonsiliasi & re-verifikasi untuk {target_date_str}. "
         f"Already done: {len(already_done)}, Synced to OK: {sync_ok_count}, "
         f"Re-verified OK: {reverif_ok}, Re-verified Fail: {reverif_fail}"
     )
@@ -285,7 +298,7 @@ async def reconcile_and_verify_failed_urls(target_date_utc: str, actor_id: Optio
     }
 
 
-async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_callback=None) -> dict:
+async def verify_all_urls_today(target_date_str: str, actor_id: int, progress_callback=None) -> dict:
     """
     Verifikasi SEMUA URL hari ini di DB, lalu update hasilnya ke DB dan Google Sheets.
     """
@@ -294,7 +307,7 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
     from bot.utils.formatters import now_wib
     import asyncio
 
-    logger.info(f"[VerifyAll] Memulai verifikasi masal hari ini untuk tanggal {target_date_utc} UTC")
+    logger.info(f"[VerifyAll] Memulai verifikasi masal hari ini untuk tanggal {target_date_str}")
 
     # 1. Ambil semua task aktif
     all_tasks = await fdb.list_tasks()
@@ -304,7 +317,7 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
     all_urls = []
     for task in all_tasks:
         task_id = task["id"]
-        urls, _ = await fdb.list_sheet_urls(task_id=task_id, date=target_date_utc, limit=1000)
+        urls, _ = await fdb.list_sheet_urls(task_id=task_id, date=target_date_str, limit=1000)
         for u in urls:
             u["_tab"] = task_tab_map.get(task_id, "Sheet1")
         all_urls.extend(urls)
@@ -367,9 +380,9 @@ async def verify_all_urls_today(target_date_utc: str, actor_id: int, progress_ca
                 new_status = result.status.value
                 if old_status != new_status:
                     submitted_delta = 0
-                    ok_delta = 1 if new_status == "OK" else 0
-                    fail_delta = 1 if new_status != "OK" else 0
-                    if old_status == "OK":
+                    ok_delta = 1 if _is_ok_status(new_status) else 0
+                    fail_delta = 1 if not _is_ok_status(new_status) else 0
+                    if _is_ok_status(old_status):
                         ok_delta -= 1
                     elif old_status not in ("PENDING", "PROCESSING", None):
                         fail_delta -= 1
@@ -452,7 +465,7 @@ async def resolve_user_id_by_string(staff_str: str) -> Optional[int]:
     return None
 
 
-async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=None) -> dict:
+async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=None) -> dict:
     """
     Sinkronisasi status hasil akhir verifikasi (Kolom G) dan verifikator (Kolom H)
     dari Google Sheets kembali ke database PostgreSQL, serta memperbarui task_progress.
@@ -463,7 +476,7 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
     import hashlib
     from datetime import date
 
-    logger.info(f"[SyncStatus] Memulai sinkronisasi status Sheets -> DB untuk tanggal {target_date_utc} UTC")
+    logger.info(f"[SyncStatus] Memulai sinkronisasi status Sheets -> DB untuk tanggal {target_date_str}")
 
     # 1. Ambil semua task aktif
     all_tasks = await fdb.list_tasks()
@@ -478,7 +491,7 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
         
         try:
             # Panggil fetch_today_urls dengan all_rows=True untuk mengambil seluruh baris (termasuk yang final)
-            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_utc), all_rows=True)
+            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_str), all_rows=True)
         except Exception as e:
             logger.error(f"[SyncStatus] Gagal fetch tab '{tab}' dari Sheets: {e}")
             errors.append(f"Tab '{tab}': {e}")
@@ -503,7 +516,7 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
                 try:
                     await fdb.add_sheet_url(
                         task_id=task_id,
-                        date=target_date_utc,
+                        date=target_date_str,
                         account=row["account"],
                         payment_url=payment_url,
                         notes=row["notes"],
@@ -534,11 +547,11 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
                     pass
 
             old_status = db_url.get("status")
-            new_status = sheet_status.strip()
+            new_status = _normalize_status(sheet_status)  # SUCCESS → OK
             
             # Jika status berbeda dan new_status tidak kosong
             if new_status and new_status != old_status:
-                is_final_status = new_status in ("OK", "SUCCESS") or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR")
+                is_final_status = _is_ok_status(new_status) or new_status.startswith("HTTP_ERR") or new_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR")
                 
                 # Update DB sheet_urls
                 db_update = {
@@ -559,18 +572,18 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
                     # Jika status sebelumnya adalah PENDING atau PROCESSING (belum final)
                     if old_status in ("PENDING", "PROCESSING", None):
                         submitted_delta = 1
-                        if new_status in ("OK", "SUCCESS"):
+                        if _is_ok_status(new_status):
                             ok_delta = 1
                         else:
                             fail_delta = 1
                     else:
                         # Jika sebelumnya sudah status final, sesuaikan deltas
-                        if new_status in ("OK", "SUCCESS"):
+                        if _is_ok_status(new_status):
                             ok_delta = 1
                         else:
                             fail_delta = 1
                             
-                        if old_status in ("OK", "SUCCESS"):
+                        if _is_ok_status(old_status):
                             ok_delta -= 1
                         else:
                             fail_delta -= 1
@@ -579,7 +592,7 @@ async def sync_status_from_sheets_to_db(target_date_utc: str, progress_callback=
                         await fdb.upsert_progress(
                             task_id=task_id,
                             user_id=target_verifier_id,
-                            date=target_date_utc,
+                            date=target_date_str,
                             submitted_delta=submitted_delta,
                             ok_delta=ok_delta,
                             fail_delta=fail_delta

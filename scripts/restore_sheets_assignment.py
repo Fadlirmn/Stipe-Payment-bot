@@ -1,7 +1,7 @@
 import sys
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 
 # Add project root to sys.path to resolve imports correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -9,10 +9,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import bot.db as fdb
 from bot.services.sheet_parser import update_sheet_status
 from bot.postgres_db import get_connection
+from bot.config import TZ
 
 async def main():
-    today_utc = datetime.now(timezone.utc).date().isoformat()
-    print(f"Restoring sheet assignments for date: {today_utc} UTC")
+    today = datetime.now(TZ).date().isoformat()
+    print(f"Restoring sheet assignments for date: {today} WIB")
     
     try:
         conn = get_connection()
@@ -27,7 +28,7 @@ async def main():
         FROM sheet_urls u 
         JOIN tasks t ON u.task_id = t.task_id
         WHERE u.date = %s AND u.status NOT IN ('PENDING', 'PROCESSING')
-    """, (today_utc,))
+    """, (today,))
     rows = cursor.fetchall()
     
     print(f"Found {len(rows)} verified URLs in database for today.")

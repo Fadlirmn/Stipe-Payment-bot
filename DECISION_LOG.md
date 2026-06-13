@@ -1,5 +1,96 @@
 # Decision Log
 
+## [2026-06-13] - Timezone & Status Standardization
+
+### Context
+1. Dashboard menampilkan statistik yang salah ("ngaco") — angka OK **2× lipat dari submitted** dan fail **negatif**.
+2. Contoh data absurd dari Staff Monitor:
+
+| Staff | Submitted | OK | Fail | Analisis |
+|---|---|---|---|---|
+| Ryu | 25 | 50 | -25 | OK = 2× submitted, Fail = -(submitted) |
+| Siti Mudrika | 25 | 50 | -25 | Sama — setiap cycle menambah +1 OK, -1 Fail |
+| Mia Salsabila | 25 | 41 | -16 | 16 cycle dari 25 URL |
+| Mutiara | 25 | 42 | -17 | 17 cycle dari 25 URL |
+
+### Root Cause Analysis — Mengapa Angka Bisa Absurd
+
+Masalah ini disebabkan oleh **siklus berulang** antara 2 proses otomatis:
+
+**Siklus Infinite Loop:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  1. sync_status_from_sheets_to_db  (setiap 30 menit)        │
+│     - Baca status dari Google Sheets                        │
+│     - Sheets punya "SUCCESS" (bukan "OK")                   │
+│     - Simpan ke DB TANPA normalisasi → DB = "SUCCESS"       │
+│                                                              │
+│  2. job_auto_verify_failed / verify_all  (setiap 15 menit)  │
+│     - Baca dari DB: old_status = "SUCCESS"                  │
+│     - Verifikasi ulang → new_status = "OK"                  │
+│     - "SUCCESS" != "OK" → masuk blok delta counting         │
+│     - ok_delta = +1 (new_status == "OK" → True)             │
+│     - Cek: old_status == "OK"? → NO! (old = "SUCCESS")      │
+│     - ok_delta TIDAK dikurangi → tetap +1                   │
+│     - fail_delta = -1 (old bukan PENDING, bukan OK)         │
+│     - Update DB → "OK"                                      │
+│                                                              │
+│  3. Kembali ke langkah 1 (sync baca "SUCCESS" dari Sheets)  │
+│     - DB di-overwrite kembali ke "SUCCESS"                   │
+│     - Kembali ke langkah 2                                  │
+│     ... dst setiap 15-30 menit sepanjang hari                │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Efek per siklus per URL:**
+- `ok_delta += 1` (menambah OK tanpa mengurangi yang lama)
+- `fail_delta -= 1` (mengurangi fail yang tidak seharusnya)
+
+**Akumulasi dalam 1 hari (misalnya 8 jam kerja):**
+- Auto-verify jalan setiap 15 menit = ~32 siklus
+- Per URL: OK bertambah hingga +32, Fail turun hingga -32
+- Itulah mengapa OK bisa 50 padahal submitted hanya 25 (25 asli + 25 siklus)
+
+### Root Causes (3 bug gabungan)
+
+1. **`sync_status_from_sheets_to_db` tidak normalisasi status** — menyimpan "SUCCESS" mentah dari Sheets ke DB, padahal sistem standar pakai "OK"
+2. **`verify_all_urls_today` delta hanya cek `== "OK"`** — tidak mengenali "SUCCESS" sebagai status OK lama, sehingga tidak mengurangi `ok_delta`
+3. **Timezone UTC vs WIB** — admin verify dan scheduler pakai UTC, sehingga antara 00:00–07:00 WIB, data di-query dari tanggal salah
+
+### Decisions
+1. **Timezone default: WIB (Asia/Jakarta)** — Semua pengguna di Indonesia, Google Sheets timezone WIB, dan staff handlers sudah WIB. Tidak ada alasan menggunakan UTC.
+2. **Status default: `OK`** — Sesuai enum `VerifStatus.OK` dan CHANGELOG. Helper `_normalize_status()` mengkonversi "SUCCESS" → "OK" sebelum disimpan ke DB, memutus siklus infinite loop.
+3. **Centralized helpers**: `_is_ok_status()` menjadi single point untuk pengecekan status OK agar delta counting benar — mengenali "SUCCESS" dan "OK" sebagai equivalen.
+
+### Affected Files
+- `bot/services/sheet_parser.py` — Normalisasi status + fix delta counting (memutus siklus)
+- `bot/handlers/admin.py` — 4 fungsi UTC → WIB
+- `bot/scheduler.py` — auto_verify UTC → WIB
+- `BOTS_STRIPE_VERIF_DASHBOARD/js/dashboard.js` — `todayStr()` dan analytics UTC → WIB
+- `scripts/restore_sheets_assignment.py`, `scripts/compare_db_sheets.py` — UTC → WIB
+
+## [2026-06-13] - Refactor Staff Bulk Verification Screen
+
+### Context
+1. Staff members clicking "⚡ Verif Semua PENDING" were immediately blocked with a raw "Kuota Staff Terpenuhi" warning if they had reached their daily quota, which was frustrating and uninformative.
+2. We want to motivate staff to perform checks mindfully (work psychology) rather than just clicking bulk verification mindlessly.
+3. During verification execution, there was no indicator showing how many links were being validated out of the total, leading to a lack of feedback.
+
+### Decisions
+1. **Interactive Status Dashboard instead of Raw Quota warnings**:
+   - *Decision*: Modify `cb_url_verify_all` to show an interactive dashboard containing Link Aktif (OK status), Link Semua (total today), and user contributions, removing raw warning messages.
+   - *Rationale*: Hiding raw warning blocks and displaying data statistics keeps staff informed of the exact task status while respecting user directives.
+2. **Work Psychology Confirmation & Responsibility Reminder**:
+   - *Decision*: Introduce a confirmation step ("✅ Ya, Jalankan Verifikasi") featuring a staff responsibility disclaimer rather than immediately verifying everything upon clicking.
+   - *Rationale*: Promotes conscious execution and reinforces staff accountability for verified data.
+3. **Live Progress Animating Counters**:
+   - *Decision*: Implement throttled live message editing (`progress_cb`) displaying the current verification progress `(N/Total)` alongside cycling emojis, with updates limited to every 1.5 seconds.
+   - *Rationale*: Prevents Telegram API rate limits while keeping staff engaged with a dynamic progress bar during bulk operations.
+4. **Persistent Bulk Verification Visibility**:
+   - *Decision*: Keep the `⚡ Verif Semua PENDING` button visible on the URL list menu regardless of quota state.
+   - *Rationale*: Allows staff members to access the status dashboard at any time to review today's counts.
+
 ## [2026-06-12] - Sync Sheets to DB & Verify All Staff Metric Protections
 
 ### Context

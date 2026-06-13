@@ -6,7 +6,8 @@ Menemukan perbedaan status atau link yang belum tersinkronisasi.
 """
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import httpx
 import psycopg2
@@ -35,7 +36,7 @@ async def fetch_sheets_pending():
     if not APPS_SCRIPT_URL:
         print("❌ APPS_SCRIPT_URL tidak ditemukan di .env")
         return []
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
     params = {"date": today, "tab": "Sheet1"}
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
@@ -49,7 +50,7 @@ async def fetch_sheets_pending():
 
 def fetch_db_urls():
     """Mengambil semua URL hari ini dari PostgreSQL."""
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(ZoneInfo("Asia/Jakarta")).date().isoformat()
     try:
         conn = psycopg2.connect(
             host=PG_HOST, port=PG_PORT, database=PG_DB,
@@ -71,7 +72,7 @@ def fetch_db_urls():
         return []
 
 async def main():
-    print("🔍 MEMULAI PEMBANDINGAN DATA (HARI INI - UTC)...")
+    print("🔍 MEMULAI PEMBANDINGAN DATA (HARI INI - WIB)...")
     print("=" * 60)
     
     db_urls = fetch_db_urls()
