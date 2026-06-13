@@ -122,33 +122,40 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
         elif normalized_status.startswith("ASSIGNED"):
             normalized_status = "PROCESSING"
 
-        # Tentukan target verifikator/assignee
-        target_user_id = None
+        # Tentukan target verifikator
+        target_verifier_id = None
         if verified_by_str:
-            target_user_id = await resolve_user_id_by_string(verified_by_str)
-        if not target_user_id and assigned_by_str:
-            target_user_id = await resolve_user_id_by_string(assigned_by_str)
-        if not target_user_id and sheet_status.startswith("ASSIGNED"):
+            target_verifier_id = await resolve_user_id_by_string(verified_by_str)
+
+        # Tentukan target assignee (prioritaskan penugasan)
+        target_assignee_id = None
+        if assigned_by_str:
+            target_assignee_id = await resolve_user_id_by_string(assigned_by_str)
+        if not target_assignee_id and sheet_status.startswith("ASSIGNED"):
             parts = sheet_status.split("-")
             if len(parts) > 1:
                 uname = parts[1].strip()
                 user_obj = await fdb.get_user_by_username(uname)
                 if user_obj:
-                    target_user_id = str(user_obj["user_id"])
-
-        doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
+                    target_assignee_id = str(user_obj["user_id"])
+        
+        # Fallback: jika tidak ada info penugasan tapi ada info verifikator
+        if not target_assignee_id and target_verifier_id:
+            target_assignee_id = target_verifier_id
 
         # Update data dict untuk update ke DB
         db_update = {}
         if normalized_status:
             db_update["status"] = normalized_status
-        if target_user_id:
-            db_update["verified_by"] = str(target_user_id)
-            db_update["assigned_to"] = str(target_user_id)
+        if target_verifier_id:
+            db_update["verified_by"] = str(target_verifier_id)
+        if target_assignee_id:
+            db_update["assigned_to"] = str(target_assignee_id)
             db_update["assigned_at"] = now_wib().isoformat()
             if normalized_status not in ("PENDING", "PROCESSING"):
                 db_update["verified_at"] = now_wib().isoformat()
         
+        doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
         if existing_ids is not None and doc_id in existing_ids:
             # Jika baris sudah ada di DB, sinkronkan info jika status di DB belum final
             db_url = await fdb.get_sheet_url(doc_id)

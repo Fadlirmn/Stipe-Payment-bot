@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - `[Fixed]` **Offset-Naive vs Offset-Aware Deadline Comparisons**: Fixed timezone-naive comparison crashes in `_show_next_pending_url`, `_show_url_list`, and `cb_url_show_detail` inside `bot/handlers/verif.py` by converting parsed deadlines (whether in ISO/T or YYYY-MM-DD format) to the localized timezone (`TZ` - WIB/Asia/Jakarta) before comparing them with `datetime.now(TZ)`.
 - `[Fixed]` **Report Total URL = 0 Bug**: Updated `postgres_count_sheet_urls` in `bot/postgres_db.py` and `sqlite_count_sheet_urls` in `bot/sqlite_db.py` to treat `task_id` as optional. If `task_id` is `None` or an empty string, the query filters only by `date` (and optional `status`), correctly aggregating all daily tasks instead of returning 0.
 - `[Fixed]` **Task Menu User NameError Crash**: Fixed a runtime `NameError` crash in `cmd_task` inside `bot/handlers/task.py` by retrieving the `user` object (`get_or_create_user(update)`) prior to fetching task progress.
+- `[Fixed]` **Assignee Overwrite Bug during Sync**: Modified `_sync_sheet_to_db` in `bot/handlers/verif.py` to separate the resolution of verifier (`verified_by`) and assignee (`assigned_to`). Prioritized `assigned_by_str` (Column F) for `assigned_to` so that staff assignments are preserved on failed/pending URLs, even if the URL was verified/auto-verified by an Admin or system.
 
 ## [2026-06-13] — Keep Verification Active After Deadline & Display Failed Statuses
 
