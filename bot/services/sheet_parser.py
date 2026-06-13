@@ -625,11 +625,79 @@ async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=
             if progress_callback:
                 await progress_callback(total_processed)
 
+        # Jalankan auto-assign otomatis jika syarat terpenuhi
+        await auto_assign_urls_to_all_staff(task_id, target_date_str)
+
     return {
         "processed": total_processed,
         "updated": updated_count,
         "errors": errors
     }
+
+
+async def auto_assign_urls_to_all_staff(task_id: str, today_str: str):
+    """
+    Melakukan pembagian (auto-assign) secara otomatis ke seluruh staff aktif
+    jika sudah lewat jam 12:00 WIB ATAU jumlah URL PENDING yang unassigned
+    memenuhi total kebutuhan kuota seluruh staff aktif.
+    """
+    import bot.db as fdb
+    from bot.config import TZ
+    from bot.utils.formatters import now_wib
+    from datetime import datetime
+
+    task = await fdb.get_task(task_id)
+    if not task:
+        logger.warning(f"[AutoAssign] Task {task_id} tidak ditemukan.")
+        return
+
+    quota_staff = task.get("quota_per_staff", 0)
+    if quota_staff <= 0:
+        logger.info(f"[AutoAssign] Task {task_id} tidak memiliki quota staff. Skip auto-assign.")
+        return
+
+    # Ambil seluruh staff aktif
+    all_users = await fdb.list_users(role="staff")
+    active_staff = [u for u in all_users if u.get("is_active", True)]
+    if not active_staff:
+        logger.info("[AutoAssign] Tidak ada staff aktif. Skip auto-assign.")
+        return
+
+    total_quota_needed = len(active_staff) * quota_staff
+    unassigned_pending = await fdb.count_unassigned_pending_urls(task_id, today_str)
+
+    now = datetime.now(TZ)
+    is_after_12 = now.hour >= 12
+    meets_requirements = unassigned_pending >= total_quota_needed
+
+    if not (is_after_12 or meets_requirements):
+        logger.info(f"[AutoAssign] Syarat tidak terpenuhi untuk task {task_id} (Jam >= 12: {is_after_12}, Pool Cukup: {meets_requirements}, Unassigned: {unassigned_pending}, Butuh: {total_quota_needed}). Skip.")
+        return
+
+    logger.info(f"[AutoAssign] Memulai auto-assign untuk task {task_id} (Unassigned: {unassigned_pending}, Butuh: {total_quota_needed})")
+
+    for staff in active_staff:
+        user_id = staff["user_id"]
+        newly_assigned = await fdb.ensure_quota_synced(task_id, today_str, user_id)
+        if newly_assigned:
+            username = staff.get("username")
+            full_name = staff.get("full_name")
+            staff_str = f"@{username}" if username else (full_name if full_name else str(user_id))
+            status_str = f"ASSIGNED - {staff_str}"
+            tab = task.get("sheet_tab", "Sheet1")
+            
+            # Update Sheets status di background/batch
+            sem = asyncio.Semaphore(5)
+            async def safe_sheet_update(u):
+                async with sem:
+                    try:
+                        await update_sheet_status(u["payment_url"], status_str, tab_name=tab, staff_info=staff_str)
+                    except Exception as e:
+                        logger.error(f"[AutoAssign] Gagal update Sheets status untuk {u['payment_url']}: {e}")
+            asyncio.create_task(asyncio.gather(*(safe_sheet_update(u) for u in newly_assigned), return_exceptions=True))
+
+    logger.info(f"[AutoAssign] Selesai auto-assign untuk task {task_id}")
+
 
 
 

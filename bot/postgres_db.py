@@ -515,7 +515,7 @@ def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> l
     # Hitung total sudah ter-reserve
     cursor.execute("""
     SELECT COUNT(*) as count FROM sheet_urls
-    WHERE task_id = %s AND date = %s AND status IN ('PENDING','PROCESSING') AND verified_by = %s
+    WHERE task_id = %s AND date = %s AND status IN ('PENDING','PROCESSING') AND assigned_to = %s
     """, (task_id, date_str, user_id_str))
     total_reserved = cursor.fetchone()["count"]
 
@@ -526,14 +526,14 @@ def postgres_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> l
         # Assign URL dari pool untuk menutup selisih quota
         cursor.execute("""
         SELECT * FROM sheet_urls
-        WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+        WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
         ORDER BY created_at ASC, id ASC
         LIMIT %s
         FOR UPDATE SKIP LOCKED
         """, (task_id, date_str, gap))
         extras = cursor.fetchall()
         for r in extras:
-            cursor.execute("UPDATE sheet_urls SET verified_by = %s WHERE id = %s",
+            cursor.execute("UPDATE sheet_urls SET assigned_to = %s WHERE id = %s",
                            (user_id_str, r["id"]))
         if extras:
             conn.commit()
@@ -1019,5 +1019,19 @@ def postgres_reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
     cursor.close()
     conn.close()
     return urls_deleted, progress_deleted
+
+
+def postgres_count_unassigned_pending_urls(task_id: str, date_str: str) -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM sheet_urls 
+        WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
+    """, (task_id, date_str))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row["count"] if row else 0
+
 
 

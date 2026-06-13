@@ -390,7 +390,7 @@ def sqlite_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> lis
 
     cursor.execute("""
     SELECT COUNT(*) as count FROM sheet_urls
-    WHERE task_id = ? AND date = ? AND status IN ('PENDING','PROCESSING') AND verified_by = ?
+    WHERE task_id = ? AND date = ? AND status IN ('PENDING','PROCESSING') AND assigned_to = ?
     """, (task_id, date_str, user_id_str))
     total_reserved = cursor.fetchone()["count"]
 
@@ -400,13 +400,13 @@ def sqlite_ensure_quota_synced(task_id: str, date_str: str, user_id: int) -> lis
     if gap > 0:
         cursor.execute("""
         SELECT * FROM sheet_urls
-        WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (verified_by IS NULL OR verified_by = '')
+        WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
         ORDER BY created_at ASC, id ASC
         LIMIT ?
         """, (task_id, date_str, gap))
         extras = cursor.fetchall()
         for r in extras:
-            cursor.execute("UPDATE sheet_urls SET verified_by = ? WHERE id = ?",
+            cursor.execute("UPDATE sheet_urls SET assigned_to = ? WHERE id = ?",
                            (user_id_str, r["id"]))
         if extras:
             conn.commit()
@@ -774,3 +774,17 @@ def sqlite_reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
     conn.commit()
     conn.close()
     return urls_deleted, progress_deleted
+
+
+def sqlite_count_unassigned_pending_urls(task_id: str, date_str: str) -> int:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) as count FROM sheet_urls 
+        WHERE task_id = ? AND date = ? AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
+    """, (task_id, date_str))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row else 0
+

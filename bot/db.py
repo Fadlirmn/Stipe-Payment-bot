@@ -96,5 +96,10 @@ async def reset_task_today(task_id: str, date_str: str) -> tuple[int, int]:
     return await asyncio.to_thread(pgdb.postgres_reset_task_today, task_id, date_str)
 
 
+async def count_unassigned_pending_urls(task_id: str, date_str: str) -> int:
+    return await asyncio.to_thread(pgdb.postgres_count_unassigned_pending_urls, task_id, date_str)
+
+
+
 
 

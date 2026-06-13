@@ -180,6 +180,10 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             await fdb.update_sheet_url(doc_id, **db_update)
         count += 1
 
+    # Jalankan auto-assign otomatis jika syarat terpenuhi
+    from bot.services.sheet_parser import auto_assign_urls_to_all_staff
+    await auto_assign_urls_to_all_staff(task_id, target_date)
+
     return count, None
 
 
