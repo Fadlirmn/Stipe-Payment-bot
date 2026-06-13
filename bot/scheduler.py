@@ -17,43 +17,24 @@ async def job_eod_summary(app):
     today = datetime.now(TZ).date().isoformat()
     logger.info(f"[Scheduler] EOD summary for {today}")
 
-    # Ambil semua sheet_urls hari ini
-    urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
+    # Ambil total OK dan Total URL harian
+    ok_count = await fdb.count_sheet_urls(None, today, status="OK")
+    total_urls = await fdb.count_sheet_urls(None, today)
     
-    # Cache daftar user dengan role staff
-    all_users = await fdb.list_users()
-    staff_ids = {u["user_id"] for u in all_users if u.get("role") == "staff"}
-    
-    total, ok, fail = 0, 0, 0
-    from bot.services.sheet_parser import _is_ok_status
-    for u in urls:
-        uid_str = u.get("assigned_to")
-        if not uid_str:
-            continue
-        try:
-            uid = int(uid_str)
-        except (ValueError, TypeError):
-            continue
-        if uid not in staff_ids:
-            continue
-            
-        total += 1
-        status = u.get("status")
-        if _is_ok_status(status):
-            ok += 1
-        else:
-            fail += 1
+    pending_count = await fdb.count_sheet_urls(None, today, status="PENDING")
+    processing_count = await fdb.count_sheet_urls(None, today, status="PROCESSING")
+    failed_count = max(0, total_urls - ok_count - pending_count - processing_count)
 
     admins = await fdb.list_users(role="admin")
     devs   = await fdb.list_users(role="dev")
 
-    pct   = int(ok / total * 100) if total > 0 else 0
+    pct   = int(ok_count / total_urls * 100) if total_urls > 0 else 0
     text  = (
         f"📊 *RINGKASAN HARIAN — {today}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Submitted   : {total}\n"
-        f"✅ OK        : {ok} ({pct}%)\n"
-        f"❌ Gagal     : {fail}\n\n"
+        f"Total URL   : {total_urls}\n"
+        f"✅ OK        : {ok_count} ({pct}%)\n"
+        f"❌ Gagal     : {failed_count}\n\n"
         f"_Laporan otomatis dari Stripe Verif Bot_"
     )
 

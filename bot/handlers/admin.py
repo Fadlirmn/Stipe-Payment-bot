@@ -160,16 +160,22 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now(TZ).date().isoformat()
     
-    # Ambil semua sheet_urls hari ini
+    # Ambil total OK dan Total URL harian
+    ok_count = await fdb.count_sheet_urls(None, today, status="OK")
+    total_urls = await fdb.count_sheet_urls(None, today)
+    
+    pending_count = await fdb.count_sheet_urls(None, today, status="PENDING")
+    processing_count = await fdb.count_sheet_urls(None, today, status="PROCESSING")
+    failed_count = max(0, total_urls - ok_count - pending_count - processing_count)
+    
+    # Ambil semua sheet_urls hari ini untuk rekap per-staff
     urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
     
     # Cache daftar user dengan role staff
     all_users = await fdb.list_users()
     staff_ids = {u["user_id"] for u in all_users if u.get("role") == "staff"}
     
-    total, ok, fail = 0, 0, 0
     by_user: dict[int, dict] = {}
-    
     from bot.services.sheet_parser import _is_ok_status
     
     for u in urls:
@@ -186,14 +192,8 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid not in staff_ids:
             continue
             
-        total += 1
         status = u.get("status")
         is_ok = _is_ok_status(status)
-        
-        if is_ok:
-            ok += 1
-        else:
-            fail += 1
             
         if uid not in by_user:
             by_user[uid] = {"total": 0, "ok": 0, "fail": 0}
@@ -204,13 +204,13 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             by_user[uid]["fail"] += 1
 
-    bar  = progress_bar(ok, total) if total else "—"
+    bar  = progress_bar(ok_count, total_urls) if total_urls else "—"
     text = (
         f"📈 *LAPORAN HARIAN — {today}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Submitted   : {total}\n"
-        f"✅ OK        : {ok}\n"
-        f"❌ Gagal     : {fail}\n"
+        f"Total URL   : {total_urls}\n"
+        f"✅ OK        : {ok_count}\n"
+        f"❌ Gagal     : {failed_count}\n"
         f"Progress     : {bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 *Per Staff:*\n"
