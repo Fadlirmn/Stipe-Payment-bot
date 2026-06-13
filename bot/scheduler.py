@@ -122,6 +122,107 @@ async def job_auto_verify_failed(app):
         logger.error(f"[Scheduler] Auto-verify failed job error: {e}")
 
 
+async def job_deadline_reminder(app):
+    from datetime import datetime
+    import json
+    from bot.config import TZ
+    
+    now = datetime.now(TZ)
+    today = now.date().isoformat()
+    logger.info("[Scheduler] Checking active tasks for deadline reminders...")
+    
+    try:
+        active_tasks = await fdb.list_tasks(status="active")
+        all_users = await fdb.list_users()
+        staff_users = [u for u in all_users if u.get("role") == "staff" and u.get("is_active", True)]
+        
+        # Inisialisasi cache alert agar tidak terkirim ganda
+        app.bot_data.setdefault("deadline_alerts_sent", {})
+        alerts_sent = app.bot_data["deadline_alerts_sent"]
+        
+        # Bersihkan cache hari-hari sebelumnya agar tidak menumpuk
+        keys_to_delete = [k for k in alerts_sent.keys() if not k.endswith(f"_{today}")]
+        for k in keys_to_delete:
+            alerts_sent.pop(k, None)
+            
+        for task in active_tasks:
+            deadline_val = task.get("deadline")
+            if not deadline_val:
+                continue
+                
+            try:
+                # deadline_val bisa berupa ISO string, misal "2026-06-13T16:00:00+07:00" atau "2026-06-13 16:00:00"
+                if "T" in deadline_val:
+                    deadline_dt = datetime.fromisoformat(deadline_val)
+                else:
+                    deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+            except Exception as e:
+                logger.error(f"[Scheduler] Gagal parse deadline '{deadline_val}' untuk task {task['task_id']}: {e}")
+                continue
+                
+            diff = deadline_dt - now
+            diff_seconds = diff.total_seconds()
+            
+            # Jika deadline kurang dari 2 jam (7200 detik) dan belum lewat
+            if 0 < diff_seconds < 7200:
+                task_id = task["task_id"]
+                quota_per_staff = task.get("quota_per_staff", 0)
+                
+                # Parsing list user yang di-assign
+                assigned_to_raw = task.get("assigned_to", '["all"]')
+                if isinstance(assigned_to_raw, str):
+                    try:
+                        assigned_to = json.loads(assigned_to_raw)
+                    except Exception:
+                        assigned_to = ["all"]
+                else:
+                    assigned_to = assigned_to_raw
+                    
+                # Filter staff yang berhak mengerjakan task ini
+                if "all" in assigned_to:
+                    target_staff = staff_users
+                else:
+                    target_staff = [u for u in staff_users if u["user_id"] in assigned_to or str(u["user_id"]) in assigned_to]
+                    
+                for staff in target_staff:
+                    user_id = staff["user_id"]
+                    cache_key = f"{task_id}_{user_id}_{today}"
+                    
+                    if cache_key in alerts_sent:
+                        continue
+                        
+                    # Cek progress pengerjaan staff
+                    prog = await fdb.get_progress(task_id, user_id, today)
+                    submitted = prog.get("submitted", 0) if prog else 0
+                    
+                    # Cek jika belum selesai (submitted < quota_per_staff)
+                    if submitted < quota_per_staff:
+                        deadline_str = deadline_dt.strftime("%d %B %Y %H:%M") + " WIB"
+                        text = (
+                            f"⏰ *PENGINGAT DEADLINE TASK* ⏰\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"📌 *Task*      : `{task_id}`\n"
+                            f"📝 *Judul*     : {task['title']}\n"
+                            f"⌛ *Sisa Waktu*: Kurang dari 2 Jam\n"
+                            f"⏰ *Deadline*  : {deadline_str}\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"Progress Anda baru selesai *{submitted}/{quota_per_staff}* URL.\n"
+                            f"Segera buka menu bot dan selesaikan verifikasi Anda! ⚡"
+                        )
+                        
+                        try:
+                            await app.bot.send_message(
+                                chat_id=user_id, text=text, parse_mode="Markdown"
+                            )
+                            logger.info(f"[Scheduler] Sent deadline reminder to user {user_id} for task {task_id}")
+                            alerts_sent[cache_key] = True
+                        except Exception as e:
+                            logger.warning(f"[Scheduler] Gagal mengirim deadline reminder ke {user_id}: {e}")
+                            
+    except Exception as e:
+        logger.error(f"[Scheduler] Error running job_deadline_reminder: {e}")
+
+
 def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=str(TZ))
 
@@ -150,11 +251,19 @@ def setup_scheduler(app) -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
+        job_deadline_reminder,
+        CronTrigger(minute="*/10", timezone=TZ),
+        args=[app],
+        id="deadline_reminder",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
         job_local_backup,
         CronTrigger(hour="*/3", timezone=TZ),
         id="local_backup",
         replace_existing=True,
     )
 
-    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m), auto_verify_failed (every 15m), local_backup (every 3h)")
+    logger.info("[Scheduler] Jobs registered: eod_summary (22:00 WIB), sync_spreadsheets (every 30m), auto_verify_failed (every 15m), deadline_reminder (every 10m), local_backup (every 3h)")
     return scheduler
