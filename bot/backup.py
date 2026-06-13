@@ -85,7 +85,8 @@ def backup_postgres_to_sqlite(db_path: str = "data/backup.db") -> tuple[bool, st
             verified_by TEXT,
             verified_at TEXT,
             created_at TEXT,
-            assigned_at TEXT
+            assigned_at TEXT,
+            assigned_to TEXT
         )""")
 
         sqlite_cursor.execute("""
@@ -144,12 +145,12 @@ def backup_postgres_to_sqlite(db_path: str = "data/backup.db") -> tuple[bool, st
         urls = pg_cursor.fetchall()
         for url in urls:
             sqlite_cursor.execute("""
-            INSERT OR REPLACE INTO sheet_urls (id, task_id, date, account, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO sheet_urls (id, task_id, date, account, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at, assigned_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 url["id"], url["task_id"], url["date"], url["account"], url["payment_url"],
                 url["notes"], url["status"], url["http_code"], url["error_msg"], url["verified_by"],
-                url["verified_at"], url["created_at"], url["assigned_at"]
+                url["verified_at"], url["created_at"], url["assigned_at"], url.get("assigned_to")
             ))
 
         # 5. Backup Task Progress
@@ -268,8 +269,8 @@ def restore_sqlite_to_postgres(db_path: str = "data/backup.db") -> tuple[bool, s
         urls = sqlite_cursor.fetchall()
         for url in urls:
             pg_cursor.execute("""
-            INSERT INTO sheet_urls (id, task_id, date, account, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO sheet_urls (id, task_id, date, account, payment_url, notes, status, http_code, error_msg, verified_by, verified_at, created_at, assigned_at, assigned_to)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 task_id = EXCLUDED.task_id,
                 date = EXCLUDED.date,
@@ -282,11 +283,12 @@ def restore_sqlite_to_postgres(db_path: str = "data/backup.db") -> tuple[bool, s
                 verified_by = EXCLUDED.verified_by,
                 verified_at = EXCLUDED.verified_at,
                 created_at = EXCLUDED.created_at,
-                assigned_at = EXCLUDED.assigned_at
+                assigned_at = EXCLUDED.assigned_at,
+                assigned_to = EXCLUDED.assigned_to
             """, (
                 url["id"], url["task_id"], url["date"], url["account"], url["payment_url"],
                 url["notes"], url["status"], url["http_code"], url["error_msg"], url["verified_by"],
-                url["verified_at"], url["created_at"], url["assigned_at"]
+                url["verified_at"], url["created_at"], url["assigned_at"], url.get("assigned_to")
             ))
 
         # 4. Restore Task Progress
