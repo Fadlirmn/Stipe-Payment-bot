@@ -77,12 +77,14 @@ async def cb_task_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | None]:
     from datetime import date
     import hashlib
+    from bot.services.sheet_parser import _normalize_status, _is_ok_status, resolve_user_id_by_string
 
     tab = task.get("sheet_tab", "Sheet1")
     task_id = task["task_id"]
 
     try:
-        rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date))
+        # Panggil dengan all_rows=True agar menarik semua data (termasuk yang sudah OK/HTTP_ERR)
+        rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date), all_rows=True)
     except Exception as exc:
         logger.error(f"[Sync] Error fetching URLs for task {task_id}: {exc}")
         return 0, str(exc)
@@ -108,36 +110,61 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             logger.warning(f"[Sync] Row date {row_date} does not match target_date {target_date}. Skipping.")
             continue
 
-        # Cek status assignment dari Google Sheets
         sheet_status = row.get("status", "")
-        assigned_user_id = None
-        if sheet_status and sheet_status.startswith("ASSIGNED"):
-            # Format: "ASSIGNED - @username"
+        verified_by_str = row.get("verified_by", "")
+        assigned_by_str = row.get("assigned_by", "")
+
+        # Tentukan status yang sudah dinormalisasi (misal SUCCESS -> OK)
+        normalized_status = _normalize_status(sheet_status)
+        if not normalized_status:
+            normalized_status = "PENDING"
+        elif normalized_status.startswith("ASSIGNED"):
+            normalized_status = "PROCESSING"
+
+        # Tentukan target verifikator/assignee
+        target_user_id = None
+        if verified_by_str:
+            target_user_id = await resolve_user_id_by_string(verified_by_str)
+        if not target_user_id and assigned_by_str:
+            target_user_id = await resolve_user_id_by_string(assigned_by_str)
+        if not target_user_id and sheet_status.startswith("ASSIGNED"):
             parts = sheet_status.split("-")
             if len(parts) > 1:
                 uname = parts[1].strip()
                 user_obj = await fdb.get_user_by_username(uname)
                 if user_obj:
-                    assigned_user_id = str(user_obj["user_id"])
+                    target_user_id = str(user_obj["user_id"])
 
         doc_id = hashlib.md5(f"{task_id}_{row['payment_url']}".encode("utf-8")).hexdigest()
+
+        # Update data dict untuk update ke DB
+        db_update = {}
+        if normalized_status:
+            db_update["status"] = normalized_status
+        if target_user_id:
+            db_update["verified_by"] = str(target_user_id)
+            db_update["assigned_to"] = str(target_user_id)
+            db_update["assigned_at"] = now_wib().isoformat()
+            if normalized_status not in ("PENDING", "PROCESSING"):
+                db_update["verified_at"] = now_wib().isoformat()
         
         if existing_ids is not None and doc_id in existing_ids:
-            # Jika baris sudah ada di DB, sinkronkan info assignment jika masih PENDING/PROCESSING di DB
-            if assigned_user_id:
-                db_url = await fdb.get_sheet_url(doc_id)
-                if db_url and db_url.get("status") in ("PENDING", "PROCESSING") and db_url.get("verified_by") != assigned_user_id:
-                    update_data = {
-                        "status": "PROCESSING",
-                        "verified_by": assigned_user_id,
-                        "assigned_at": now_wib().isoformat()
-                    }
-                    # assigned_to hanya diisi sekali, tidak pernah ditimpa
-                    if not db_url.get("assigned_to"):
-                        update_data["assigned_to"] = assigned_user_id
-                    await fdb.update_sheet_url(doc_id, **update_data)
+            # Jika baris sudah ada di DB, sinkronkan info jika status di DB belum final
+            db_url = await fdb.get_sheet_url(doc_id)
+            if db_url:
+                db_status = db_url.get("status")
+                db_is_final = db_status and (_is_ok_status(db_status) or db_status.startswith("HTTP_ERR") or db_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR"))
+                
+                # Hanya sinkronkan data baru jika di DB belum berstatus final
+                if not db_is_final and db_update:
+                    # Jangan menimpa status DB yang PROCESSING/PENDING ke PENDING jika di sheet kosong/PENDING
+                    if normalized_status == "PENDING" and db_status == "PROCESSING":
+                        db_update.pop("status", None)
+                    if db_update:
+                        await fdb.update_sheet_url(doc_id, **db_update)
             continue
 
+        # Jika URL baru, insert ke DB
         await fdb.add_sheet_url(
             task_id=task_id,
             date=target_date,
@@ -148,16 +175,10 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             check_exists=(existing_ids is None),
         )
         
-        # Jika baru masuk dan sudah berstatus ASSIGNED di Sheets
-        if assigned_user_id:
-            await fdb.update_sheet_url(
-                doc_id,
-                status="PROCESSING",
-                assigned_to=assigned_user_id,
-                verified_by=assigned_user_id,
-                assigned_at=now_wib().isoformat()
-            )
+        if db_update:
+            await fdb.update_sheet_url(doc_id, **db_update)
         count += 1
+
     return count, None
 
 

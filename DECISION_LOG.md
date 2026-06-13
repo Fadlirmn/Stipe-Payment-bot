@@ -41,6 +41,19 @@ When administrators or developers trigger a manual "Sync Sheet" action, they exp
 - `bot/db.py`
 - `bot/handlers/admin.py`
 
+## [2026-06-13] - Fetch All Rows on Manual Sync
+
+### Context
+Manual sync actions used `all_rows=False` when calling `fetch_today_urls`. This meant URLs with final statuses (such as `OK` or `HTTP_ERR` in the sheet) were omitted from Google Apps Script's response. When a database reset occurred before manual sync, this caused the sync to import 0 URLs into the database if all spreadsheet URLs had already been verified/failed.
+
+### Decisions
+1. **Force all_rows=True on sync**: Modify `_sync_sheet_to_db` to always pass `all_rows=True` when pulling today's URLs from Google Sheets.
+2. **Process and sync row statuses on import**: Ensure new rows are imported with their actual sheet status, verifier, and assignee info, rather than resetting them all to `PENDING` status.
+3. **Preserve final DB statuses**: Maintain existing logic where already-final database entries are skipped to prevent status demotion.
+
+### Affected Files
+- `bot/handlers/verif.py`
+
 ## [2026-06-13] - Query Daily Report Metrics Directly from sheet_urls
 
 ### Context
