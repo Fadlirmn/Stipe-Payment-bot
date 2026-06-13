@@ -15,12 +15,14 @@
 4. **Define user in task menu handler**: Query `user` at the start of `cmd_task` to prevent `NameError`.
 5. **Prioritize assignee over verifier in sync**: Modify `_sync_sheet_to_db` in `bot/handlers/verif.py` to separate verifier (`verified_by`) and assignee (`assigned_to`) fields. Prioritize `assigned_by_str` (Column F) for `assigned_to` instead of letting `verified_by` overwrite it. This preserves the original staff assignment info on failed/pending URLs when syncing from Sheets.
 6. **Strict staff URL filtering**: Always set `verified_by_filter` to the user's ID for staff in `_show_url_list` in `bot/handlers/verif.py`, even after the task deadline has passed, so staff members only see their own assigned URLs.
+7. **Fix reconciler false positive OK bug**: Change `reconcile_and_verify_failed_urls` in `bot/services/sheet_parser.py` to pull all rows (`all_rows=True`) and build a status dictionary. Only reconcile failed URLs to `OK` in the DB if their status in Sheets is explicitly `OK` or `SUCCESS`. This prevents all failed URLs from being marked `OK` in the DB whenever Google Sheets returns 0 pending rows (which occurs when all rows have final statuses).
 
 ### Affected Files
 - `bot/handlers/verif.py`
 - `bot/handlers/task.py`
 - `bot/postgres_db.py`
 - `bot/sqlite_db.py`
+- `bot/services/sheet_parser.py`
 
 ## [2026-06-13] - Ignore Dev/System in Statistics & Use Assignee as Stats Owner
 

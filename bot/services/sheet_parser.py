@@ -164,8 +164,8 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
     all_tasks = await fdb.list_tasks()
     task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
 
-    # 2. Ambil pending URLs dari Google Sheets (untuk semua tab aktif)
-    sheet_pending_urls = set()
+    # 2. Ambil status URL dari Google Sheets (untuk semua tab aktif)
+    sheet_url_statuses = {}
     tabs_seen = set()
     for task in all_tasks:
         tab = task.get("sheet_tab", "Sheet1")
@@ -173,10 +173,11 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
             continue
         tabs_seen.add(tab)
         try:
-            # fetch_today_urls mengembalikan baris yang belum final status
-            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_str))
+            # fetch_today_urls dengan all_rows=True mengembalikan semua baris dengan statusnya
+            rows = await fetch_today_urls(tab_name=tab, target_date=date.fromisoformat(target_date_str), all_rows=True)
             for r in rows:
-                sheet_pending_urls.add(r["payment_url"].strip())
+                purl = r["payment_url"].strip()
+                sheet_url_statuses[purl] = r.get("status", "").strip().upper()
         except Exception as e:
             logger.error(f"[Reconciler] Gagal fetch tab '{tab}' dari Sheets: {e}")
             raise RuntimeError(f"Gagal memanggil Google Sheets untuk tab '{tab}': {e}")
@@ -198,9 +199,13 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
     need_reverif = []
     for u in failed_urls:
         purl = u.get("payment_url", "").strip()
-        if purl and purl not in sheet_pending_urls:
+        sheet_status = sheet_url_statuses.get(purl, "")
+        
+        # Jika status di Google Sheets adalah OK/SUCCESS, maka di-reconcile ke OK
+        if sheet_status in ("OK", "SUCCESS"):
             already_done.append(u)
         else:
+            # Jika status di Google Sheets adalah PENDING/ASSIGNED/HTTP_ERR dll., kita re-verifikasi
             need_reverif.append(u)
 
     # 4. Update DB untuk yang sudah disubmit di Sheets -> reset ke OK
