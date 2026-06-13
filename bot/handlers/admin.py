@@ -159,28 +159,46 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_role("admin", "dev")
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now(TZ).date().isoformat()
-    tasks = await fdb.list_tasks()
-
+    
+    # Ambil semua sheet_urls hari ini
+    urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
+    
     total, ok, fail, pending = 0, 0, 0, 0
-    for task in tasks:
-        t   = await fdb.count_sheet_urls(task["task_id"], today)
-        o   = await fdb.count_sheet_urls(task["task_id"], today, status="OK")
-        p   = await fdb.count_sheet_urls(task["task_id"], today, status="PENDING")
-        total   += t
-        ok      += o
-        pending += p
-        fail    += t - o - p
-
-    progs = await fdb.list_progress_by_date(today)
-    # Group by user
     by_user: dict[int, dict] = {}
-    for p in progs:
-        uid = p["user_id"]
-        if uid not in by_user:
-            by_user[uid] = {"submitted": 0, "ok": 0, "fail": 0}
-        by_user[uid]["submitted"] += p["submitted"]
-        by_user[uid]["ok"]        += p["verified_ok"]
-        by_user[uid]["fail"]      += p["verified_fail"]
+    
+    from bot.services.sheet_parser import _is_ok_status
+    
+    for u in urls:
+        total += 1
+        status = u.get("status")
+        
+        is_ok = _is_ok_status(status)
+        is_pending = status in ("PENDING", "PROCESSING", None) or not status
+        is_fail = not is_ok and not is_pending
+        
+        if is_ok:
+            ok += 1
+        elif is_pending:
+            pending += 1
+        else:
+            fail += 1
+            
+        # Group by staff (assigned_to or verified_by as fallback)
+        uid_str = u.get("assigned_to") or u.get("verified_by")
+        if uid_str:
+            try:
+                uid = int(uid_str)
+            except (ValueError, TypeError):
+                continue
+                
+            if uid not in by_user:
+                by_user[uid] = {"total": 0, "ok": 0, "fail": 0}
+                
+            by_user[uid]["total"] += 1
+            if is_ok:
+                by_user[uid]["ok"] += 1
+            elif is_fail:
+                by_user[uid]["fail"] += 1
 
     bar  = progress_bar(ok + fail, total) if total else "—"
     text = (
@@ -199,7 +217,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
         user = await fdb.get_user(uid)
         name = user.get("full_name", str(uid)) if user else str(uid)
-        text += f"  {i}. {name}: {stat['ok']}✅ {stat['fail']}❌ ({stat['submitted']} total)\n"
+        text += f"  {i}. {name}: {stat['ok']}✅ {stat['fail']}❌ ({stat['total']} total)\n"
 
     await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 

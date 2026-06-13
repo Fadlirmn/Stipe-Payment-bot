@@ -17,13 +17,17 @@ async def job_eod_summary(app):
     today = datetime.now(TZ).date().isoformat()
     logger.info(f"[Scheduler] EOD summary for {today}")
 
-    tasks = await fdb.list_tasks(None)  # semua status
+    # Ambil semua sheet_urls hari ini
+    urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
     total, ok, pending = 0, 0, 0
-    for task in tasks:
-        t = await fdb.count_sheet_urls(task["task_id"], today)
-        o = await fdb.count_sheet_urls(task["task_id"], today, status="OK")
-        p = await fdb.count_sheet_urls(task["task_id"], today, status="PENDING")
-        total += t; ok += o; pending += p
+    from bot.services.sheet_parser import _is_ok_status
+    for u in urls:
+        total += 1
+        status = u.get("status")
+        if _is_ok_status(status):
+            ok += 1
+        elif status in ("PENDING", "PROCESSING", None) or not status:
+            pending += 1
 
     admins = await fdb.list_users(role="admin")
     devs   = await fdb.list_users(role="dev")

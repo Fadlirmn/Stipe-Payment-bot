@@ -12,6 +12,19 @@ When syncing status back from Google Sheets to the Database (via `sync_status_fr
 ### Affected Files
 - `bot/services/sheet_parser.py`
 
+## [2026-06-13] - Query Daily Report Metrics Directly from sheet_urls
+
+### Context
+The `/report` command (daily summary) and the End-of-Day scheduler task computed verification statistics per staff member using the `task_progress` table. Due to prior timezone and `SUCCESS`/`OK` delta counting bugs, the data in `task_progress` was corrupted, resulting in negative verified numbers (e.g., `-16✅` or `576❌`) on the Telegram report screen.
+
+### Decisions
+1. **Query raw data directly**: Modify both `cmd_report` and `job_eod_summary` to query `sheet_urls` for the current date directly.
+2. **Single-pass scan**: Pull all URLs for the day in a single database query, counting stats (`OK`, `Pending`, `Gagal`) globally and grouping by staff member (`assigned_to` or `verified_by`) in-memory. This removes redundant database queries and guarantees 100% accurate metrics matching the dashboard.
+
+### Affected Files
+- `bot/handlers/admin.py`
+- `bot/scheduler.py`
+
 ## [2026-06-13] - Timezone & Status Standardization
 
 ### Context
