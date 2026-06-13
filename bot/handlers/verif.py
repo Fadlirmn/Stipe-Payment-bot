@@ -245,7 +245,8 @@ async def _show_next_pending_url(
         )
         if deadline_passed:
             text += f"⏰ *Deadline tugas ini telah terlewati.*\n\n"
-        text += f"Terima kasih telah menyelesaikan verifikasi hari ini! 🙌"
+        text += f"Terima kasih telah menyelesaikan verifikasi hari ini! 🙌\n\n"
+        text += f"👉 *Tips*: Gunakan menu *Lihat Daftar Link* untuk melihat semua URL atau memverifikasi ulang URL yang gagal."
         msg = update.callback_query.message if update.callback_query else update.message
         await msg.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
         return
@@ -578,10 +579,12 @@ async def _show_url_list(
     offset = (page - 1) * limit
 
     # Sync quota dulu — pastikan reserved block sesuai quota terbaru dari DB
-    # Staff SELALU hanya lihat URL miliknya sendiri
+    # Staff hanya lihat URL miliknya sendiri jika tugas belum selesai dan deadline belum terlewati
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
-        verified_by_filter = str(user["user_id"])
+        pending_count = await fdb.count_sheet_urls(task_id, today, status="PENDING")
+        if not deadline_passed and pending_count > 0:
+            verified_by_filter = str(user["user_id"])
         if not quota_exceeded:
             newly_assigned = await fdb.ensure_quota_synced(task_id, today, user["user_id"])
             if newly_assigned:
