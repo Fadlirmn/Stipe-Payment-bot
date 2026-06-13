@@ -154,9 +154,10 @@ async def _sync_sheet_to_db(task: dict, target_date: str) -> tuple[int, str | No
             if db_url:
                 db_status = db_url.get("status")
                 db_is_final = db_status and (_is_ok_status(db_status) or db_status.startswith("HTTP_ERR") or db_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR"))
+                sheet_is_final = normalized_status and (_is_ok_status(normalized_status) or normalized_status.startswith("HTTP_ERR") or normalized_status in ("FAILED", "TIMEOUT", "SKIPPED", "ERROR"))
                 
-                # Hanya sinkronkan data baru jika di DB belum berstatus final
-                if not db_is_final and db_update:
+                # Jangan menimpa status DB yang final dengan status dari Sheet yang non-final
+                if not (db_is_final and not sheet_is_final):
                     # Jangan menimpa status DB yang PROCESSING/PENDING ke PENDING jika di sheet kosong/PENDING
                     if normalized_status == "PENDING" and db_status == "PROCESSING":
                         db_update.pop("status", None)

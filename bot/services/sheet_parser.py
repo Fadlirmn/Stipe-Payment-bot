@@ -577,6 +577,8 @@ async def sync_status_from_sheets_to_db(target_date_str: str, progress_callback=
                     }
                     if target_verifier_id:
                         db_update["verified_by"] = str(target_verifier_id)
+                    if target_assignee_id:
+                        db_update["assigned_to"] = str(target_assignee_id)
                     await fdb.update_sheet_url(doc_id, **db_update)
                     updated_count += 1
  
