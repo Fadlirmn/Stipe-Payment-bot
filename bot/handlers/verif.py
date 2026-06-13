@@ -473,10 +473,8 @@ async def _show_task_options_menu(
 ):
     task_id = task["task_id"]
     total = await fdb.count_sheet_urls(task_id, today)
-    pending = await fdb.count_sheet_urls(task_id, today, status="PENDING")
-    processing = await fdb.count_sheet_urls(task_id, today, status="PROCESSING")
-    done = max(0, total - pending - processing)
-    bar = progress_bar(done, total)
+    ok = await fdb.count_sheet_urls(task_id, today, status="OK")
+    bar = progress_bar(ok, total)
 
     deadline_str = (
         task["deadline"][:16].replace("T", " ") + " WIB"
@@ -494,7 +492,7 @@ async def _show_task_options_menu(
         f"📌 Task       : `{task_id}`\n"
         f"📝 Judul      : {task['title']}\n"
         f"📅 Tanggal    : {today}\n"
-        f"📊 Progress   : {bar} ({done}/{total})\n"
+        f"📊 Progress   : {bar}\n"
         f"👤 Milik Saya : {user_done}{quota_staff_str}\n"
         f"⏰ Deadline   : {deadline_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
