@@ -2,10 +2,10 @@
 
 **Tanggal:** 2026-06-13  
 **Status:** selesai  
-**Versi:** v6
+**Versi:** v7
 
 ## Konteks
-Mempermudah verifikasi ulang URL gagal setelah deadline/kuota habis, merapikan progress menu, dan mengotomasi pembagian tugas staf untuk mencegah daftar link kosong. Selain itu, menyelaraskan skema cadangan SQLite lokal agar field penugasan (`assigned_to`) tidak hilang/ter-reset saat backup/restore.
+Mempermudah verifikasi ulang URL gagal setelah deadline/kuota habis, merapikan progress menu, dan mengotomasi pembagian tugas staf untuk mencegah daftar link kosong. Selain itu, menyelaraskan skema SQLite backup serta menyamakan metrik laporan EOD & `/report` agar membandingkan total URL OK terhadap total URL harian (bukan terhadap jumlah submisi).
 
 ## Keputusan & Hasil
 - **Akses Tetap Aktif**: Tombol verifikasi selalu aktif/bisa digunakan meski deadline terlewati atau kuota penuh.
@@ -15,6 +15,7 @@ Mempermudah verifikasi ulang URL gagal setelah deadline/kuota habis, merapikan p
 - **Dynamic Claim Sebelum Jam 12**: Pengambilan link sebelum jam 12 tetap dinamis (sistem lama) dengan proteksi transaksi (`FOR UPDATE SKIP LOCKED`) untuk menghindari konflik penumpukan.
 - **Perbaikan Bug Kuota**: Mengubah `ensure_quota_synced` agar mengecek `assigned_to` demi akurasi alokasi.
 - **Sinkronisasi Schema Backup**: Menambahkan kolom `assigned_to` ke skema tabel SQLite lokal di `bot/backup.py` serta memperbarui fungsi backup/restore untuk mencegah hilangnya data penugasan saat database dicadangkan.
+- **Standarisasi Metrik Laporan**: Mengubah rumus laporan harian (baik EOD maupun `/report`) agar membandingkan jumlah status `OK` dengan total keseluruhan URL hari ini (bukan hanya URL yang di-assign/submitted).
 
 ## Tindak Lanjut
 - [ ] Evaluasi efektivitas alokasi otomatis harian.
