@@ -397,15 +397,30 @@ async function loadOverview(d) {
       document.getElementById('card-staff-wrap').style.display = 'flex';
       document.querySelector('.overview-progress-card .card-header').textContent = '📊 Completion Rate Hari Ini';
 
-      const [total, ok, pending] = await Promise.all([
-        countDocs('sheet_urls', [['date', '==', d]]),
-        countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'OK']]),
-        countDocs('sheet_urls', [['date', '==', d], ['status', '==', 'PENDING']]),
+      const [staffList, urls] = await Promise.all([
+        getDocs('users', [['role', '==', 'staff']]),
+        getDocs('sheet_urls', [['date', '==', d]]),
       ]);
-      const fail  = total - ok - pending;
+      const staffIds = new Set(staffList.map(s => String(s.user_id)));
+      
+      let total = 0, ok = 0, pending = 0, fail = 0;
+      for (const u of urls) {
+        const uid = String(u.assigned_to || '');
+        if (!uid || !staffIds.has(uid)) continue;
+        
+        total++;
+        if (u.status === 'OK') {
+          ok++;
+        } else if (u.status === 'PENDING') {
+          pending++;
+        } else {
+          fail++;
+        }
+      }
+      
       const pct   = total > 0 ? Math.round(ok / total * 100 * 10) / 10 : 0;
       const tasks  = await countDocs('tasks', [['status', '==', 'active']]);
-      const staff  = await countDocs('users', [['role', '==', 'staff']]);
+      const staff  = staffList.length;
 
       document.getElementById('val-total').textContent   = total;
       document.getElementById('val-ok').textContent      = ok;
@@ -694,6 +709,9 @@ async function loadAnalytics() {
   const labels = [], okData = [], failData = [];
   const today = new Date();
 
+  const staffList = await getDocs('users', [['role', '==', 'staff']]);
+  const staffIds = new Set(staffList.map(s => String(s.user_id)));
+
   for (let i = 6; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
@@ -704,10 +722,15 @@ async function loadAnalytics() {
       String(wibD.getDate()).padStart(2,'0');
     labels.push(dateStr.slice(5));
 
-    const [ok, total] = await Promise.all([
-      countDocs('sheet_urls', [['date','==',dateStr],['status','==','OK']]),
-      countDocs('sheet_urls', [['date','==',dateStr]]),
-    ]);
+    const urls = await getDocs('sheet_urls', [['date','==',dateStr]]);
+    let ok = 0, total = 0;
+    for (const u of urls) {
+      const uid = String(u.assigned_to || '');
+      if (uid && staffIds.has(uid)) {
+        total++;
+        if (u.status === 'OK') ok++;
+      }
+    }
     okData.push(ok);
     failData.push(Math.max(0, total - ok));
   }
