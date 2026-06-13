@@ -558,9 +558,9 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     # 1. Cek PROCESSING
     cursor.execute("""
     SELECT * FROM sheet_urls 
-    WHERE task_id = %s AND date = %s AND status = 'PROCESSING' AND (assigned_to = %s OR (assigned_to IS NULL AND verified_by = %s))
+    WHERE task_id = %s AND date = %s AND status = 'PROCESSING' AND assigned_to = %s
     LIMIT 1
-    """, (task_id, date_str, user_id_str, user_id_str))
+    """, (task_id, date_str, user_id_str))
     row = cursor.fetchone()
     if row:
         cursor.close()
@@ -570,18 +570,18 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to = %s OR (assigned_to IS NULL AND verified_by = %s))
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND assigned_to = %s
     ORDER BY created_at ASC, id ASC
     LIMIT 1
     FOR UPDATE
-    """, (task_id, date_str, user_id_str, user_id_str))
+    """, (task_id, date_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
     if row_to_claim:
         # Update status menjadi PROCESSING
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = %s
         WHERE id = %s
         """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
@@ -600,8 +600,8 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     # Hitung berapa yang sudah ter-assign ke user ini (PENDING + PROCESSING)
     cursor.execute("""
     SELECT COUNT(*) as count FROM sheet_urls
-    WHERE task_id = %s AND date = %s AND status IN ('PENDING', 'PROCESSING') AND (assigned_to = %s OR (assigned_to IS NULL AND verified_by = %s))
-    """, (task_id, date_str, user_id_str, user_id_str))
+    WHERE task_id = %s AND date = %s AND status IN ('PENDING', 'PROCESSING') AND assigned_to = %s
+    """, (task_id, date_str, user_id_str))
     total_reserved = cursor.fetchone()["count"]
 
     # Cek progress yang sudah di-submit
@@ -620,7 +620,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
         if remaining_quota > 0:
             cursor.execute("""
             SELECT * FROM sheet_urls
-            WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '') AND (verified_by IS NULL OR verified_by = '')
+            WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
             ORDER BY created_at ASC, id ASC
             LIMIT %s
             FOR UPDATE SKIP LOCKED
@@ -628,25 +628,25 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
             extra_rows = cursor.fetchall()
             for r in extra_rows:
                 cursor.execute("""
-                UPDATE sheet_urls SET verified_by = %s, assigned_to = COALESCE(assigned_to, %s) WHERE id = %s
-                """, (user_id_str, user_id_str, r["id"]))
+                UPDATE sheet_urls SET assigned_to = %s WHERE id = %s
+                """, (user_id_str, r["id"]))
             if extra_rows:
                 conn.commit()
 
     # 2. Cek apakah user punya PENDING yang sudah di-assign ke dia
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to = %s OR (assigned_to IS NULL AND verified_by = %s))
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND assigned_to = %s
     ORDER BY created_at ASC, id ASC
     LIMIT 1
     FOR UPDATE
-    """, (task_id, date_str, user_id_str, user_id_str))
+    """, (task_id, date_str, user_id_str))
     row_to_claim = cursor.fetchone()
 
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = %s
         WHERE id = %s
         """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
@@ -670,7 +670,7 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
 
     cursor.execute("""
     SELECT * FROM sheet_urls
-    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '') AND (verified_by IS NULL OR verified_by = '')
+    WHERE task_id = %s AND date = %s AND status = 'PENDING' AND (assigned_to IS NULL OR assigned_to = '')
     ORDER BY created_at ASC, id ASC
     LIMIT %s
     FOR UPDATE SKIP LOCKED
@@ -682,22 +682,21 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
         first_row = rows[0]
         cursor.execute("""
         UPDATE sheet_urls
-        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = %s
         WHERE id = %s
-        """, (user_id_str, now.isoformat(), user_id_str, first_row["id"]))
+        """, (now.isoformat(), user_id_str, first_row["id"]))
 
-        # Sisa baris kita tandai verified_by = user_id_str agar ter-reserve untuk user ini
+        # Sisa baris kita tandai assigned_to = user_id_str agar ter-reserve untuk user ini
         for r in rows[1:]:
             cursor.execute("""
             UPDATE sheet_urls
-            SET verified_by = %s, assigned_to = COALESCE(assigned_to, %s)
+            SET assigned_to = %s
             WHERE id = %s
-            """, (user_id_str, user_id_str, r["id"]))
+            """, (user_id_str, r["id"]))
 
         conn.commit()
 
         first_row["status"] = "PROCESSING"
-        first_row["verified_by"] = user_id_str
         first_row["assigned_at"] = now.isoformat()
         cursor.close()
         conn.close()
@@ -717,13 +716,12 @@ def postgres_get_or_claim_next_url(task_id: str, date_str: str, user_id: int) ->
     if row_to_claim:
         cursor.execute("""
         UPDATE sheet_urls 
-        SET status = 'PROCESSING', verified_by = %s, assigned_at = %s, assigned_to = COALESCE(assigned_to, %s)
+        SET status = 'PROCESSING', assigned_at = %s, assigned_to = %s
         WHERE id = %s
-        """, (user_id_str, now.isoformat(), user_id_str, row_to_claim["id"]))
+        """, (now.isoformat(), user_id_str, row_to_claim["id"]))
         conn.commit()
 
         row_to_claim["status"] = "PROCESSING"
-        row_to_claim["verified_by"] = user_id_str
         row_to_claim["assigned_at"] = now.isoformat()
         cursor.close()
         conn.close()
