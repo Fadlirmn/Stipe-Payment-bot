@@ -163,7 +163,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ambil semua sheet_urls hari ini
     urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
     
-    total, ok, fail, pending = 0, 0, 0, 0
+    total, ok, fail = 0, 0, 0
     by_user: dict[int, dict] = {}
     
     from bot.services.sheet_parser import _is_ok_status
@@ -173,18 +173,14 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = u.get("status")
         
         is_ok = _is_ok_status(status)
-        is_pending = status in ("PENDING", "PROCESSING", None) or not status
-        is_fail = not is_ok and not is_pending
         
         if is_ok:
             ok += 1
-        elif is_pending:
-            pending += 1
         else:
             fail += 1
             
-        # Group by staff (assigned_to or verified_by as fallback)
-        uid_str = u.get("assigned_to") or u.get("verified_by")
+        # Group by staff (assigned_to strictly)
+        uid_str = u.get("assigned_to")
         if uid_str:
             try:
                 uid = int(uid_str)
@@ -197,17 +193,16 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             by_user[uid]["total"] += 1
             if is_ok:
                 by_user[uid]["ok"] += 1
-            elif is_fail:
+            else:
                 by_user[uid]["fail"] += 1
 
-    bar  = progress_bar(ok + fail, total) if total else "—"
+    bar  = progress_bar(ok, total) if total else "—"
     text = (
         f"📈 *LAPORAN HARIAN — {today}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Total URL   : {total}\n"
+        f"Submitted   : {total}\n"
         f"✅ OK        : {ok}\n"
         f"❌ Gagal     : {fail}\n"
-        f"⚪ Pending   : {pending}\n"
         f"Progress     : {bar}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 *Per Staff:*\n"
@@ -217,7 +212,8 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
         user = await fdb.get_user(uid)
         name = user.get("full_name", str(uid)) if user else str(uid)
-        text += f"  {i}. {name}: {stat['ok']}✅ {stat['fail']}❌ ({stat['total']} total)\n"
+        rate = int(stat["ok"] / stat["total"] * 100) if stat["total"] > 0 else 0
+        text += f"  {i}. {name}: {stat['ok']}✅ {stat['fail']}❌ ({rate}% dari {stat['total']} total)\n"
 
     await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
 

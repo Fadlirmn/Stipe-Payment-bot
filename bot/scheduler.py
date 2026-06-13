@@ -19,15 +19,15 @@ async def job_eod_summary(app):
 
     # Ambil semua sheet_urls hari ini
     urls, _ = await fdb.list_sheet_urls(date=today, limit=100000)
-    total, ok, pending = 0, 0, 0
+    total, ok, fail = 0, 0, 0
     from bot.services.sheet_parser import _is_ok_status
     for u in urls:
         total += 1
         status = u.get("status")
         if _is_ok_status(status):
             ok += 1
-        elif status in ("PENDING", "PROCESSING", None) or not status:
-            pending += 1
+        else:
+            fail += 1
 
     admins = await fdb.list_users(role="admin")
     devs   = await fdb.list_users(role="dev")
@@ -36,10 +36,9 @@ async def job_eod_summary(app):
     text  = (
         f"📊 *RINGKASAN HARIAN — {today}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Total URL   : {total}\n"
-        f"✅ Verified  : {ok} ({pct}%)\n"
-        f"⚪ Pending   : {pending}\n"
-        f"❌ Gagal     : {total - ok - pending}\n\n"
+        f"Submitted   : {total}\n"
+        f"✅ OK        : {ok} ({pct}%)\n"
+        f"❌ Gagal     : {fail}\n\n"
         f"_Laporan otomatis dari Stripe Verif Bot_"
     )
 

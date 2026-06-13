@@ -19,11 +19,15 @@ The `/report` command (daily summary) and the End-of-Day scheduler task computed
 
 ### Decisions
 1. **Query raw data directly**: Modify both `cmd_report` and `job_eod_summary` to query `sheet_urls` for the current date directly.
-2. **Single-pass scan**: Pull all URLs for the day in a single database query, counting stats (`OK`, `Pending`, `Gagal`) globally and grouping by staff member (`assigned_to` or `verified_by`) in-memory. This removes redundant database queries and guarantees 100% accurate metrics matching the dashboard.
+2. **Strict Assignment Grouping**: Group/filter statistics strictly by `assigned_to` to represent who a URL was assigned to, rather than who verified it (`verified_by`).
+3. **Normalized 3-Status Metric**: Standardize all metrics into three columns/categories: `Submitted` (total URLs assigned), `OK` (URLs with OK status), and `Gagal` (all non-OK statuses, replacing Pending).
+4. **Completion Percentage**: Include clear `OK / task` percentage formatting (e.g. `85% (17/20)`) in both bot reports and dashboard tables.
 
 ### Affected Files
 - `bot/handlers/admin.py`
 - `bot/scheduler.py`
+- `js/dashboard.js`
+- `index.html`
 
 ## [2026-06-13] - Timezone & Status Standardization
 

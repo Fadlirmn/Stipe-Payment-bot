@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - `[Changed]` Menambahkan helper functions `_normalize_status()` dan `_is_ok_status()` di `sheet_parser.py` sebagai single source of truth untuk normalisasi dan pengecekan status OK.
 - `[Changed]` Rename parameter `target_date_utc` → `target_date_str` di fungsi `reconcile_and_verify_failed_urls`, `verify_all_urls_today`, dan `sync_status_from_sheets_to_db` untuk kejelasan.
 - `[Changed]` Scripts `compare_db_sheets.py` dan `restore_sheets_assignment.py` diupdate dari UTC ke WIB.
+- `[Changed]` Updated daily report, EOD summary scheduler, and dashboard stats (Staff Monitor & Rate per User) to group strictly by `assigned_to` instead of `verified_by`, normalized metrics to Submitted, OK, and Gagal (any non-OK status), and added OK/task completion percentage formatting.
 
 ## [2026-06-13] — Refactor Staff Bulk Verification Screen
 
