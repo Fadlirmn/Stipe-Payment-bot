@@ -1,5 +1,25 @@
 # Decision Log
 
+## [2026-06-13] - HTML Parse Mode & Optional task_id in Count Queries
+
+### Context
+1. The Telegram bot crashes when displaying the URL list if the checkout URL or any metadata notes contain Markdown reserved characters.
+2. Checking task deadlines caused comparison exceptions due to timezone offset mismatch between naive strptime-parsed datetimes and aware WIB datetimes.
+3. The Admin daily report (`cmd_report`) printed `Total URL : 0` because it queried `count_sheet_urls` with `task_id=None` to aggregate all tasks, but the database query explicitly required task_id to match (evaluating `task_id = NULL` in SQL, which returns zero rows).
+4. Opening the task list menu via `/task` crashed because of a reference to an undefined variable `user`.
+
+### Decisions
+1. **Switch to HTML parse mode**: Modify `_show_url_list` in `bot/handlers/verif.py` to use `parse_mode="HTML"` and escape all dynamic string interpolations using `html.escape`.
+2. **Standardize deadline comparisons**: Replace the comparison logic in verif handlers to automatically handle timezone-aware or naive datetimes and normalize them to `TZ` (Asia/Jakarta).
+3. **Make task_id optional in count queries**: Change both `postgres_count_sheet_urls` and `sqlite_count_sheet_urls` to conditionally build the query string. If `task_id` is None/empty, omit the `task_id` filter from the SQL statement to aggregate across all tasks.
+4. **Define user in task menu handler**: Query `user` at the start of `cmd_task` to prevent `NameError`.
+
+### Affected Files
+- `bot/handlers/verif.py`
+- `bot/handlers/task.py`
+- `bot/postgres_db.py`
+- `bot/sqlite_db.py`
+
 ## [2026-06-13] - Ignore Dev/System in Statistics & Use Assignee as Stats Owner
 
 ### Context

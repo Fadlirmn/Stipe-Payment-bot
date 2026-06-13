@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import asyncio
+import html
 from loguru import logger
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -227,7 +228,11 @@ async def _show_next_pending_url(
             if "T" in deadline_val:
                 deadline_dt = datetime.fromisoformat(deadline_val)
             else:
-                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S")
+            if deadline_dt.tzinfo is None or deadline_dt.tzinfo.utcoffset(deadline_dt) is None:
+                deadline_dt = deadline_dt.replace(tzinfo=TZ)
+            else:
+                deadline_dt = deadline_dt.astimezone(TZ)
             if datetime.now(TZ) > deadline_dt:
                 deadline_passed = True
         except Exception as e:
@@ -573,7 +578,11 @@ async def _show_url_list(
             if "T" in deadline_val:
                 deadline_dt = datetime.fromisoformat(deadline_val)
             else:
-                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S")
+            if deadline_dt.tzinfo is None or deadline_dt.tzinfo.utcoffset(deadline_dt) is None:
+                deadline_dt = deadline_dt.replace(tzinfo=TZ)
+            else:
+                deadline_dt = deadline_dt.astimezone(TZ)
             if datetime.now(TZ) > deadline_dt:
                 deadline_passed = True
         except Exception as e:
@@ -621,18 +630,20 @@ async def _show_url_list(
     total_pages = max(1, (total + limit - 1) // limit)
 
     quota_str = f"{submitted}/{quota_staff}" if quota_staff > 0 else f"{submitted} (unlimited)"
+    quota_str_escaped = html.escape(quota_str)
+    task_id_escaped = html.escape(task_id)
     text_lines = [
-        f"📋 *DAFTAR URL VERIFIKASI*",
-        f"📌 Task   : `{task_id}`",
+        f"📋 <b>DAFTAR URL VERIFIKASI</b>",
+        f"📌 Task   : <code>{task_id_escaped}</code>",
         f"📅 Tanggal: {today}",
-        f"👤 Kuota  : {quota_str}",
+        f"👤 Kuota  : {quota_str_escaped}",
         f"━━━━━━━━━━━━━━━━━━━━",
     ]
     if deadline_passed:
-        text_lines.append("⚠️ *Deadline tugas ini telah terlewati.* Anda tetap dapat melihat dan memverifikasi link.")
+        text_lines.append("⚠️ <b>Deadline tugas ini telah terlewati.</b> Anda tetap dapat melihat dan memverifikasi link.")
         text_lines.append("━━━━━━━━━━━━━━━━━━━━")
     elif quota_exceeded:
-        text_lines.append("✅ *Kuota hari ini sudah terpenuhi* — Anda bisa melihat link tapi verifikasi ditutup.")
+        text_lines.append("✅ <b>Kuota hari ini sudah terpenuhi</b> — Anda bisa melihat link tapi verifikasi ditutup.")
         text_lines.append("━━━━━━━━━━━━━━━━━━━━")
 
     buttons = []
@@ -670,9 +681,15 @@ async def _show_url_list(
                 except Exception:
                     pass
 
+            acc_escaped = html.escape(acc)
+            failed_status_str_escaped = html.escape(failed_status_str)
+            notes_str_escaped = html.escape(notes_str)
+            staff_str_escaped = html.escape(staff_str)
+            payment_url_escaped = html.escape(u['payment_url'])
+
             text_lines.append(
-                f"{idx}. {emoji} *{acc}*{failed_status_str}{notes_str}{staff_str}\n"
-                f"   🔗 [Buka Stripe Checkout]({u['payment_url']})"
+                f"{idx}. {emoji} <b>{acc_escaped}</b>{failed_status_str_escaped}{notes_str_escaped}{staff_str_escaped}\n"
+                f"   🔗 <a href=\"{payment_url_escaped}\">Buka Stripe Checkout</a>"
             )
 
             # Tombol verif selalu tampil agar staff tetap bisa memproses/retry
@@ -714,14 +731,14 @@ async def _show_url_list(
     try:
         await update.callback_query.edit_message_text(
             "\n".join(text_lines),
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=markup,
             disable_web_page_preview=True
         )
     except Exception:
         await msg.reply_text(
             "\n".join(text_lines),
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=markup,
             disable_web_page_preview=True
         )
@@ -789,7 +806,11 @@ async def cb_url_show_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if "T" in deadline_val:
                 deadline_dt = datetime.fromisoformat(deadline_val)
             else:
-                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                deadline_dt = datetime.strptime(deadline_val[:19], "%Y-%m-%d %H:%M:%S")
+            if deadline_dt.tzinfo is None or deadline_dt.tzinfo.utcoffset(deadline_dt) is None:
+                deadline_dt = deadline_dt.replace(tzinfo=TZ)
+            else:
+                deadline_dt = deadline_dt.astimezone(TZ)
             if datetime.now(TZ) > deadline_dt:
                 deadline_passed = True
         except Exception as e:

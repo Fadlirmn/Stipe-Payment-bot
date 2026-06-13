@@ -452,19 +452,18 @@ def postgres_update_sheet_url(doc_id: str, **kwargs):
     conn.close()
 
 
-def postgres_count_sheet_urls(task_id: str, date: str, status: str | None = None) -> int:
+def postgres_count_sheet_urls(task_id: str | None, date: str, status: str | None = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
+    query = "SELECT COUNT(*) as count FROM sheet_urls WHERE date = %s"
+    params = [date]
+    if task_id:
+        query += " AND task_id = %s"
+        params.append(task_id)
     if status:
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM sheet_urls 
-        WHERE task_id = %s AND date = %s AND status = %s
-        """, (task_id, date, status))
-    else:
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM sheet_urls 
-        WHERE task_id = %s AND date = %s
-        """, (task_id, date))
+        query += " AND status = %s"
+        params.append(status)
+    cursor.execute(query, tuple(params))
     row = cursor.fetchone()
     cursor.close()
     conn.close()

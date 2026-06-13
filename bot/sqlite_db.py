@@ -335,19 +335,18 @@ def sqlite_update_sheet_url(doc_id: str, **kwargs):
     conn.close()
 
 
-def sqlite_count_sheet_urls(task_id: str, date: str, status: str | None = None) -> int:
+def sqlite_count_sheet_urls(task_id: str | None, date: str, status: str | None = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
+    query = "SELECT COUNT(*) as count FROM sheet_urls WHERE date = ?"
+    params = [date]
+    if task_id:
+        query += " AND task_id = ?"
+        params.append(task_id)
     if status:
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM sheet_urls 
-        WHERE task_id = ? AND date = ? AND status = ?
-        """, (task_id, date, status))
-    else:
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM sheet_urls 
-        WHERE task_id = ? AND date = ?
-        """, (task_id, date))
+        query += " AND status = ?"
+        params.append(status)
+    cursor.execute(query, tuple(params))
     row = cursor.fetchone()
     conn.close()
     return row["count"] if row else 0

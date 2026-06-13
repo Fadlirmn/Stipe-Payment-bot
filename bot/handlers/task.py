@@ -17,6 +17,7 @@ from bot.config import TZ
 
 @require_approved
 async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user  = await get_or_create_user(update)
     today = datetime.now(TZ).date().isoformat()
     tasks = await fdb.list_tasks(status="active")
 
