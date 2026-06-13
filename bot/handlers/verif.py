@@ -602,9 +602,7 @@ async def _show_url_list(
     # Staff hanya lihat URL miliknya sendiri jika tugas belum selesai dan deadline belum terlewati
     verified_by_filter = None
     if user.get("role") not in ("admin", "dev"):
-        pending_count = await fdb.count_sheet_urls(task_id, today, status="PENDING")
-        if not deadline_passed and pending_count > 0:
-            verified_by_filter = str(user["user_id"])
+        verified_by_filter = str(user["user_id"])
         if not quota_exceeded:
             newly_assigned = await fdb.ensure_quota_synced(task_id, today, user["user_id"])
             if newly_assigned:
