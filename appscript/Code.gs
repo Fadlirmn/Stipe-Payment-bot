@@ -57,6 +57,25 @@ function doGet(e) {
       var email     = String(row[COL_EMAIL]     || "").trim();
       var currentStatus = String(row[COL_STATUS] || "").trim();
 
+      // ── Filter tanggal DULU (early exit) ────────────────────────────────
+      // Ini penting agar saat all=1, baris historis dari hari lain langsung
+      // di-skip tanpa proses lebih lanjut → mencegah Apps Script timeout.
+      if (!rawTs) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "empty timestamp" });
+        continue;
+      }
+      var rowDate = parseDateValue(rawTs);
+      if (!rowDate) {
+        if (isDebug) debugInfo.push({ row: i + 1, reason: "cannot parse date: " + String(rawTs) });
+        continue;
+      }
+      var formatted = formatDate(rowDate);
+      if (formatted !== dateStr) {
+        // Beda tanggal → skip langsung, tidak perlu cek URL dll.
+        continue;
+      }
+      // ────────────────────────────────────────────────────────────────────
+
       if (!rawUrl) {
         if (isDebug) debugInfo.push({ row: i + 1, reason: "empty url" });
         continue;
@@ -72,18 +91,6 @@ function doGet(e) {
         continue;
       }
 
-      var rowDate = parseDateValue(rawTs);
-      if (!rowDate) {
-        if (isDebug) debugInfo.push({ row: i + 1, reason: "cannot parse date: " + String(rawTs) });
-        continue;
-      }
-
-      var formatted = formatDate(rowDate);
-      if (formatted !== dateStr) {
-        if (isDebug) debugInfo.push({ row: i + 1, reason: "date mismatch: " + formatted + " vs target " + dateStr });
-        continue;
-      }
-
       results.push({
         account:     email,
         api_key:     String(row[COL_API_KEY]     || "").trim(),
@@ -92,7 +99,7 @@ function doGet(e) {
         status:      currentStatus,
         date:        formatted,
         timestamp:   String(rawTs),
-        row_index:   i + 1,  // 1-based, berguna jika bot perlu update status nanti
+        row_index:   i + 1,
         assigned_by: String(row[COL_ASSIGN_BY]   || "").trim(),
         verified_by: String(row[COL_VERIF_BY]    || "").trim()
       });
@@ -127,15 +134,15 @@ function doPost(e) {
         var statusUpper = String(data.status).toUpperCase();
         var isAssign = statusUpper.indexOf("ASSIGNED") === 0;
 
-        // Kolom F — Status utama
+        // Kolom G (index 6) — Status utama
         sheet.getRange(i + 1, COL_STATUS + 1).setValue(data.status);
 
         if (data.staff_info !== undefined) {
           if (isAssign) {
-            // Kolom G — Assigned By (hanya diisi saat assign, tidak ditimpa verif)
+            // Kolom F (index 5) — Assigned By (hanya diisi saat assign, tidak ditimpa verif)
             sheet.getRange(i + 1, COL_ASSIGN_BY + 1).setValue(data.staff_info);
           } else {
-            // Kolom H — Verified By (hasil verifikasi, tidak menimpa assign)
+            // Kolom H (index 7) — Verified By (hasil verifikasi, tidak menimpa assign)
             sheet.getRange(i + 1, COL_VERIF_BY + 1).setValue(data.staff_info);
           }
         }

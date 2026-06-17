@@ -1021,8 +1021,17 @@ async def cmd_verify_failed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         res = await reconcile_and_verify_failed_urls(today, actor_id=user["user_id"], progress_callback=progress_cb)
 
+        sheets_warn = ""
+        if res.get("sheets_fetch_failed"):
+            sheets_warn = (
+                "\n⚠️ *Catatan:* Koneksi ke Google Sheets gagal saat rekonsiliasi.\n"
+                "Re-verifikasi tetap dijalankan dari database lokal.\n"
+                "Pastikan Apps Script sudah di-deploy ulang jika masalah berlanjut.\n\n"
+            )
+
         await update.message.reply_text(
             f"✅ *Re-verifikasi Selesai — {today} (WIB)*\n\n"
+            f"{sheets_warn}"
             f"*Sync dari Sheets:*\n"
             f"  • Sudah disubmit (skip reverif): `{res['already_done_count']}`\n"
             f"  • DB diupdate → OK             : `{res['sync_ok_count']}`\n\n"
@@ -1166,7 +1175,7 @@ async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT
 
     try:
         all_tasks = await fdb.list_tasks()
-        task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
+        task_tab_map = {t["task_id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
 
         total_pushed = 0
         errors = 0
@@ -1174,7 +1183,7 @@ async def cmd_push_verified_status(update: Update, context: ContextTypes.DEFAULT
         sem = asyncio.Semaphore(5)
 
         for task in all_tasks:
-            task_id = task["id"]
+            task_id = task["task_id"]
             tab = task_tab_map.get(task_id, "Sheet1")
 
             # Ambil semua URL hari ini dari DB

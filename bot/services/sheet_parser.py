@@ -75,7 +75,7 @@ async def fetch_today_urls(tab_name: str = "Sheet1", target_date: Optional[date]
             resp.raise_for_status()
             payload = resp.json()
     except Exception as exc:
-        logger.error(f"[SheetParser] Gagal memanggil Apps Script: {exc}")
+        logger.error(f"[SheetParser] Gagal memanggil Apps Script ({type(exc).__name__}): {exc!r}")
         raise
 
     if "error" in payload:
@@ -165,7 +165,9 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
     task_tab_map = {t["id"]: t.get("sheet_tab", "Sheet1") for t in all_tasks}
 
     # 2. Ambil status URL dari Google Sheets (untuk semua tab aktif)
+    # Jika Sheets tidak bisa diakses, kita tetap lanjutkan re-verifikasi dari DB (skip reconcile).
     sheet_url_statuses = {}
+    sheets_fetch_failed = False
     tabs_seen = set()
     for task in all_tasks:
         tab = task.get("sheet_tab", "Sheet1")
@@ -179,8 +181,13 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
                 purl = r["payment_url"].strip()
                 sheet_url_statuses[purl] = r.get("status", "").strip().upper()
         except Exception as e:
-            logger.error(f"[Reconciler] Gagal fetch tab '{tab}' dari Sheets: {e}")
-            raise RuntimeError(f"Gagal memanggil Google Sheets untuk tab '{tab}': {e}")
+            err_detail = repr(e) if not str(e).strip() else str(e)
+            logger.warning(
+                f"[Reconciler] ⚠️ Gagal fetch tab '{tab}' dari Sheets ({type(e).__name__}): {err_detail}. "
+                f"Reconciliation dengan Sheets dilewati, re-verifikasi dari DB tetap berjalan."
+            )
+            sheets_fetch_failed = True
+            # Lanjutkan ke tab berikutnya / ke step re-verifikasi, JANGAN raise
 
     # 3. Ambil URL failed dari DB
     failed_urls = await fdb.get_all_failed_urls(date_str=target_date_str)
@@ -191,7 +198,8 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
             "sync_ok_count": 0,
             "reverif_ok": 0,
             "reverif_fail": 0,
-            "total_failed": 0
+            "total_failed": 0,
+            "sheets_fetch_failed": sheets_fetch_failed
         }
 
     # Pisahkan URL
@@ -302,7 +310,8 @@ async def reconcile_and_verify_failed_urls(target_date_str: str, actor_id: Optio
         "sync_ok_count": sync_ok_count,
         "reverif_ok": reverif_ok,
         "reverif_fail": reverif_fail,
-        "total_failed": len(failed_urls)
+        "total_failed": len(failed_urls),
+        "sheets_fetch_failed": sheets_fetch_failed
     }
 
 
@@ -409,6 +418,7 @@ async def verify_all_urls_today(target_date_str: str, actor_id: int, progress_ca
                 # Update ke Google Sheets (Tulis verifikator asli ke Sheets jika ada, jika tidak gunakan actor_str)
                 try:
                     sheet_staff_info = actor_str
+                    original_verifier = url_obj.get("verified_by") or url_obj.get("assigned_to")
                     if original_verifier:
                         try:
                             orig_user = await fdb.get_user(int(original_verifier))
